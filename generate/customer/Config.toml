@@ -1,0 +1,26 @@
+# Ballerina runtime config, baked into the image. Defaults target the compose
+# network (service name "otel-collector"). For local `bal run` outside compose,
+# override [ballerinax.jaeger] agentHostname, or just run without a collector —
+# trace/span IDs are still generated locally (only the export is best-effort).
+
+[ballerina.log]
+format = "json"
+
+[ballerina.observe]
+enabled = true
+provider = "jaeger"
+tracingEnabled = true
+tracingProvider = "jaeger"
+metricsEnabled = true
+metricsReporter = "prometheus"
+
+# ballerinax/jaeger is an OTLP gRPC exporter; point it at the OTel Collector.
+[ballerinax.jaeger]
+agentHostname = "otel-collector"
+agentPort = 4317
+samplerType = "const"
+samplerParam = 1.0   # MUST be a decimal literal (1.0, not 1) or startup crashes
+
+[ballerinax.prometheus]
+host = "0.0.0.0"
+port = 9797

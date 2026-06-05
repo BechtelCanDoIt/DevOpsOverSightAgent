@@ -1,0 +1,28 @@
+# Ballerina build output
+**/target/
+**/*.jar
+
+# Python
+**/__pycache__/
+*.pyc
+.venv/
+.python-version
+
+# Secrets / local env (commit the .example versions only)
+.env
+**/.env
+compose/.env
+agent/.env
+!**/.env.example
+
+# Runtime / logs
+*.log
+audit.log
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp
+
+.ralph-logs/
+

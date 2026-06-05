@@ -1,0 +1,116 @@
+# OpenTelemetry Collector — single telemetry shipper for the mesh.
+#
+# Phase 2 ships this in a CREDS-FREE default: every pipeline exports to `debug`
+# so `docker compose up` works with no Splunk/Datadog accounts (we don't have
+# them yet — see todo/phase-0). You can confirm the mesh is emitting with:
+#     docker compose -f compose/docker-compose.yml logs -f otel-collector
+#
+# Phase 1 turns on the real fan-out: put creds in compose/.env and move the
+# `datadog` / `splunk_hec` exporters from the commented blocks into the matching
+# pipelines below. Fan-out target (architecture.md §4):
+#   traces  -> Datadog + Splunk     logs -> Splunk (HEC)     metrics -> Datadog
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Ballerina services expose Prometheus metrics on :9797 (ballerinax/prometheus).
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: ballerina-mesh
+          scrape_interval: 15s
+          static_configs:
+            - targets:
+                - store:9797
+                - customer:9797
+                - order:9797
+                - inventory:9797
+                - invoice:9797
+                - payment:9797
+                - notification:9797
+                - load-gen:9797
+
+  # Logs: Ballerina writes structured JSON to stdout, captured by Docker's
+  # json-file driver. This tails those files so logs reach Splunk. Path/format
+  # depend on the Docker backend (Rancher Desktop may differ) — Phase 1 tunes
+  # this; enable by adding `filelog` to the logs pipeline + mounting the dir.
+  filelog:
+    include:
+      - /var/lib/docker/containers/*/*-json.log
+    operators:
+      - type: json_parser
+        parse_from: body
+      - type: move
+        from: attributes.log
+        to: body
+
+processors:
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+  # Tag everything for cross-system correlation (architecture.md §4).
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: demo
+        action: upsert
+      - key: service.namespace
+        value: devops-poc
+        action: upsert
+  # The mesh's Ballerina packages are named `<x>_service` (no hyphens allowed),
+  # but Phases 3 & 5 reference `<x>-service`. Normalize deterministically so the
+  # Datadog service map + Splunk both show the load-bearing `-service` suffix,
+  # regardless of whether the SDK honored OTEL_SERVICE_NAME.
+  transform/servicename:
+    trace_statements:
+      - context: resource
+        statements:
+          - replace_pattern(attributes["service.name"], "_service$", "-service")
+    metric_statements:
+      - context: resource
+        statements:
+          - replace_pattern(attributes["service.name"], "_service$", "-service")
+
+exporters:
+  debug:
+    verbosity: detailed
+
+  # ── Phase 1: real backends (need creds in compose/.env) ──────────────────
+  # datadog:
+  #   api:
+  #     key: ${env:DD_API_KEY}
+  #     site: ${env:DD_SITE}
+  # splunk_hec:
+  #   token: ${env:SPLUNK_HEC_TOKEN}
+  #   endpoint: ${env:SPLUNK_HEC_URL}
+  #   source: otel-collector
+  #   index: ${env:SPLUNK_INDEX}
+  #   tls:
+  #     insecure_skip_verify: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/servicename, resource, batch]
+      exporters: [debug]          # Phase 1: add datadog, splunk_hec
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, transform/servicename, resource, batch]
+      exporters: [debug]          # Phase 1: add datadog
+    logs:
+      receivers: [otlp]           # Phase 1: add filelog
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]          # Phase 1: add splunk_hec

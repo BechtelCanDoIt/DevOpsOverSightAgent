@@ -1,0 +1,13 @@
+# Inventory-heavy traffic — hammers the Redis→Postgres cold-cache path so the
+# slow-query / cache-miss latency regression story shows up in span breakdowns
+# (architecture.md §7, "slow-query regression" scenario).
+name: regression
+baseRps: 8
+workers: 6
+durationSeconds: 0
+weights:
+  store: 20
+  customer: 5
+  inventory: 45
+  invoice: 5
+  order: 25

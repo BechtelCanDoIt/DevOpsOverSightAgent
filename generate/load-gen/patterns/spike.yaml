@@ -1,0 +1,16 @@
+# Baseline, then an order-heavy burst — exercises the order → payment fan-out
+# under load (good backdrop for injecting the payment-service chaos incident).
+name: spike
+baseRps: 5
+workers: 6
+durationSeconds: 0
+spike:
+  afterSeconds: 60    # hold baseline for 60s, then spike
+  rps: 25
+  forSeconds: 60      # spike window length, then back to baseline
+weights:
+  store: 25
+  customer: 10
+  inventory: 20
+  invoice: 5
+  order: 40

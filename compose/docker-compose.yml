@@ -1,0 +1,249 @@
+# DevOps Observability POC — workload + observability stack.
+#
+# Default `docker compose up -d` starts the 7-service Ballerina mesh, load-gen,
+# and the supporting infra (Postgres, Redis, NATS) + the OTel Collector. No SaaS
+# creds required — the Collector exports to `debug` (see otel-collector/config.yaml).
+#
+# Optional profiles:
+#   --profile dev    adds Jaeger (local trace UI on :16686)
+#   --profile saas   adds the Datadog Agent (needs DD_API_KEY in .env)
+#
+# Service name <x>-service comes from OTEL_SERVICE_NAME; the package is <x>_service.
+
+name: devops-poc
+
+networks:
+  devops-poc:
+    driver: bridge
+
+volumes:
+  pgdata:
+
+# ── reusable env fragments ──────────────────────────────────────────────────
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  CHAOS_TOKEN: ${CHAOS_TOKEN:-dev-chaos-token}
+
+x-db-env: &db-env
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_USER: poc
+  DB_PASSWORD: ${POSTGRES_PASSWORD:-pocpass}
+
+x-ballerina-build: &ballerina-build
+  args:
+    GIT_COMMIT: ${GIT_COMMIT:-unknown}
+
+services:
+  # ── Observability + infra ──────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: poc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pocpass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"   # exposed for poking around
+    networks: [devops-poc]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    networks: [devops-poc]
+    ports:
+      - "6379:6379"   # exposed so `bal test` on the host can reach it
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]   # JetStream + monitoring endpoint
+    networks: [devops-poc]
+    ports:
+      - "4222:4222"   # client port — exposed so `bal test` on the host can reach it
+      - "8222:8222"   # monitoring (optional, but handy)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    profiles: [dev]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  datadog-agent:
+    image: gcr.io/datadoghq/agent:7
+    profiles: [saas]
+    environment:
+      DD_API_KEY: ${DD_API_KEY}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_APM_ENABLED: "true"
+      DD_APM_NON_LOCAL_TRAFFIC: "true"
+      DD_LOGS_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  # ── Mesh: 7 services + load-gen ─────────────────────────────────────────────
+  store:
+    build: { context: ../generate/store, <<: *ballerina-build }
+    image: devops-poc/store-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: store-service
+      DB_NAME: storedb
+      INVENTORY_URL: http://inventory:9090
+    ports: ["9091:9090"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+      inventory: { condition: service_started }
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  customer:
+    build: { context: ../generate/customer, <<: *ballerina-build }
+    image: devops-poc/customer-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: customer-service
+      DB_NAME: customerdb
+    ports: ["9092:9090"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  order:
+    build: { context: ../generate/order, <<: *ballerina-build }
+    image: devops-poc/order-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: order-service
+      DB_NAME: orderdb
+      CUSTOMER_URL: http://customer:9090
+      INVENTORY_URL: http://inventory:9090
+      PAYMENT_URL: http://payment:9090
+      INVOICE_URL: http://invoice:9090
+      NATS_URL: nats://nats:4222
+    ports: ["9093:9090"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      customer: { condition: service_started }
+      inventory: { condition: service_started }
+      payment: { condition: service_started }
+      invoice: { condition: service_started }
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  inventory:
+    build: { context: ../generate/inventory, <<: *ballerina-build }
+    image: devops-poc/inventory-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: inventory-service
+      DB_NAME: inventorydb
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports: ["9094:9090"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  invoice:
+    build: { context: ../generate/invoice, <<: *ballerina-build }
+    image: devops-poc/invoice-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: invoice-service
+      DB_NAME: invoicedb
+    ports: ["9095:9090"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  payment:
+    build: { context: ../generate/payment, <<: *ballerina-build }
+    image: devops-poc/payment-service
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: payment-service
+    ports: ["9096:9090"]
+    depends_on:
+      otel-collector: { condition: service_started }
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  notification:
+    build: { context: ../generate/notification, <<: *ballerina-build }
+    image: devops-poc/notification-service
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: notification-service
+      NATS_URL: nats://nats:4222
+    ports: ["9097:9090"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      nats: { condition: service_healthy }
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  load-gen:
+    build: { context: ../generate/load-gen, <<: *ballerina-build }
+    image: devops-poc/load-gen
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: load-gen
+      LOADGEN_PATTERN: ${LOADGEN_PATTERN:-baseline}
+      STORE_URL: http://store:9090
+      CUSTOMER_URL: http://customer:9090
+      ORDER_URL: http://order:9090
+      INVENTORY_URL: http://inventory:9090
+      INVOICE_URL: http://invoice:9090
+    depends_on:
+      store: { condition: service_started }
+      customer: { condition: service_started }
+      order: { condition: service_started }
+      inventory: { condition: service_started }
+      invoice: { condition: service_started }
+    networks: [devops-poc]
+    restart: unless-stopped
