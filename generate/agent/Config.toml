@@ -1,0 +1,30 @@
+# Ballerina runtime config. Defaults target the compose network.
+# For local `bal run`, override [ballerinax.jaeger] agentHostname or run without collector.
+
+[devopspoc.devops_agent]
+# MCP server URLs — override with env vars in compose
+splunkMcpUrl = "http://splunk-mock-mcp:8400/mcp"
+datadogMcpUrl = "http://datadog-mock-mcp:8401/mcp"
+ballerinaTopologyMcpUrl = "http://mcp-server:8290/mcp"
+
+[ballerina.log]
+format = "json"
+
+[ballerina.observe]
+enabled = true
+provider = "jaeger"
+tracingEnabled = true
+tracingProvider = "jaeger"
+metricsEnabled = true
+metricsReporter = "prometheus"
+
+# ballerinax/jaeger is an OTLP gRPC exporter; point it at the OTel Collector.
+[ballerinax.jaeger]
+agentHostname = "otel-collector"
+agentPort = 4317
+samplerType = "const"
+samplerParam = 1.0   # MUST be a decimal literal (1.0, not 1) or startup crashes
+
+[ballerinax.prometheus]
+host = "0.0.0.0"
+port = 9797

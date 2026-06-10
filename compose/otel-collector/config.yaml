@@ -111,6 +111,8 @@ service:
       processors: [memory_limiter, transform/servicename, resource, batch]
       exporters: [debug]          # Phase 1: add datadog
     logs:
-      receivers: [otlp]           # Phase 1: add filelog
+      receivers: [otlp]           # filelog: only captures infra container stdout (Postgres/Redis/NATS)
+                                  # on macOS Docker Desktop, /var/lib/docker/containers is inside the
+                                  # Alpine VM and not mountable here. Enable when deploying to Linux/k8s.
       processors: [memory_limiter, resource, batch]
       exporters: [debug]          # Phase 1: add splunk_hec

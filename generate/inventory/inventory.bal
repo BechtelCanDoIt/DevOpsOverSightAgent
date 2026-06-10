@@ -9,7 +9,7 @@ listener http:Listener mainListener = new (9090);
 
 // ── Data layer clients ───────────────────────────────────────────────────────
 
-final postgresql:Client db = check new (
+final postgresql:Client|error db = new (
     host = envOr("DB_HOST", "postgres"),
     port = check int:fromString(envOr("DB_PORT", "5432")),
     username = envOr("DB_USER", "poc"),
@@ -17,7 +17,7 @@ final postgresql:Client db = check new (
     database = envOr("DB_NAME", "inventorydb")
 );
 
-final redis:Client cache = check new (connection = {
+final redis:Client|error cache = new (connection = {
     host: envOr("REDIS_HOST", "redis"),
     port: check int:fromString(envOr("REDIS_PORT", "6379"))
 });
@@ -38,26 +38,31 @@ isolated function canReserve(int current, int qty) returns boolean =>
 
 // ── Startup: schema + seed ────────────────────────────────────────────────────
 
-function init() returns error? {
-    _ = check db->execute(`CREATE TABLE IF NOT EXISTS stock (sku TEXT PRIMARY KEY, qty INT)`);
-
-    int count = check db->queryRow(`SELECT COUNT(*) FROM stock`);
-    if count == 0 {
-        string[] skus = ["SKU-001", "SKU-002", "SKU-003", "SKU-004", "SKU-005"];
-        foreach string sku in skus {
-            _ = check db->execute(`INSERT INTO stock (sku, qty) VALUES (${sku}, ${100})
-                ON CONFLICT (sku) DO NOTHING`);
+function init() {
+    do {
+        postgresql:Client dbClient = check db;
+        _ = check dbClient->execute(`CREATE TABLE IF NOT EXISTS stock (sku TEXT PRIMARY KEY, qty INT)`);
+        int count = check dbClient->queryRow(`SELECT COUNT(*) FROM stock`);
+        if count == 0 {
+            string[] skus = ["SKU-001", "SKU-002", "SKU-003", "SKU-004", "SKU-005"];
+            foreach string sku in skus {
+                _ = check dbClient->execute(`INSERT INTO stock (sku, qty) VALUES (${sku}, ${100})
+                    ON CONFLICT (sku) DO NOTHING`);
+            }
+            logInfo("seeded stock table with SKU-001..SKU-005");
         }
-        logInfo("seeded stock table with SKU-001..SKU-005");
+        logInfo("inventory-service started");
+    } on fail var e {
+        logError("DB unavailable at startup — schema init skipped", e);
     }
-    logInfo("inventory-service started");
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 // Read qty from Postgres; nil when the SKU is unknown.
 isolated function dbQty(string sku) returns int|error? {
-    int|sql:Error r = db->queryRow(`SELECT qty FROM stock WHERE sku = ${sku}`);
+    postgresql:Client dbClient = check db;
+    int|sql:Error r = dbClient->queryRow(`SELECT qty FROM stock WHERE sku = ${sku}`);
     if r is sql:NoRowsError {
         return ();
     }
@@ -80,8 +85,14 @@ service /stock on mainListener {
             return chaosErrorResponse(injected);
         }
 
-        // Cache lookup (graceful on Redis errors → treat as miss).
-        string|redis:Error? cached = cache->get(cacheKey(sku));
+        // Cache lookup (graceful on Redis errors or unavailability → treat as miss).
+        redis:Client|error cacheRef = cache;
+        string|redis:Error? cached;
+        if cacheRef is redis:Client {
+            cached = cacheRef->get(cacheKey(sku));
+        } else {
+            cached = ();
+        }
         if cached is string {
             int|error qty = int:fromString(cached);
             if qty is int {
@@ -106,9 +117,11 @@ service /stock on mainListener {
         }
 
         // Populate cache for next time (best-effort).
-        string|redis:Error setRes = cache->set(cacheKey(sku), qty.toString());
-        if setRes is redis:Error {
-            logError(string `redis set failed for sku=${sku}`, setRes);
+        if cacheRef is redis:Client {
+            string|redis:Error setRes = cacheRef->set(cacheKey(sku), qty.toString());
+            if setRes is redis:Error {
+                logError(string `redis set failed for sku=${sku}`, setRes);
+            }
         }
         logInfo(string `stock miss db sku=${sku}`);
         return {sku, qty, 'source: "db"};
@@ -126,8 +139,14 @@ service /reserve on mainListener {
         }
 
         // Determine current available qty: cache first, then db.
+        redis:Client|error cacheRef = cache;
         int? fromCache = ();
-        string|redis:Error? cached = cache->get(cacheKey(req.sku));
+        string|redis:Error? cached;
+        if cacheRef is redis:Client {
+            cached = cacheRef->get(cacheKey(req.sku));
+        } else {
+            cached = ();
+        }
         if cached is string {
             int|error c = int:fromString(cached);
             if c is int {
@@ -161,8 +180,16 @@ service /reserve on mainListener {
         }
 
         // Decrement in Postgres (authoritative).
+        postgresql:Client|error dbRef = db;
+        if dbRef is error {
+            logError(string `db unavailable for sku=${req.sku}`, dbRef);
+            http:Response r = new;
+            r.statusCode = 503;
+            r.setPayload({'error: "db-unavailable", sku: req.sku});
+            return r;
+        }
         sql:ExecutionResult|sql:Error res =
-            db->execute(`UPDATE stock SET qty = qty - ${req.qty} WHERE sku = ${req.sku}`);
+            dbRef->execute(`UPDATE stock SET qty = qty - ${req.qty} WHERE sku = ${req.sku}`);
         if res is sql:Error {
             logError(string `reserve db update failed for sku=${req.sku}`, res);
             http:Response r = new;
@@ -174,12 +201,14 @@ service /reserve on mainListener {
         int remaining = current - req.qty;
 
         // Refresh the cache entry with the new value (best-effort; on error invalidate).
-        string|redis:Error setRes = cache->set(cacheKey(req.sku), remaining.toString());
-        if setRes is redis:Error {
-            logError(string `redis update failed for sku=${req.sku}, invalidating`, setRes);
-            int|redis:Error delRes = cache->del([cacheKey(req.sku)]);
-            if delRes is redis:Error {
-                logError(string `redis invalidate failed for sku=${req.sku}`, delRes);
+        if cacheRef is redis:Client {
+            string|redis:Error setRes = cacheRef->set(cacheKey(req.sku), remaining.toString());
+            if setRes is redis:Error {
+                logError(string `redis update failed for sku=${req.sku}, invalidating`, setRes);
+                int|redis:Error delRes = cacheRef->del([cacheKey(req.sku)]);
+                if delRes is redis:Error {
+                    logError(string `redis invalidate failed for sku=${req.sku}`, delRes);
+                }
             }
         }
 

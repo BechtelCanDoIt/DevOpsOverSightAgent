@@ -48,36 +48,34 @@ Initial runbooks to ship:
 ## Tasks
 
 ### 3.1 Scaffold
-- [ ] `generate/mcp-server/` package (lives with the rest of the Ballerina source under `generate/`). Note: `agent/mcp/` is the *client-side* wiring the Phase 4 agent uses to reach this server — not the server itself
-- [ ] Use an MCP SDK if a Ballerina one exists; otherwise implement Streamable HTTP MCP protocol directly (it's a small protocol — request/response over POST + SSE)
-- [ ] Same OTel instrumentation as the mesh services — the MCP's own calls show up in Datadog
-- [ ] Run in the Docker Compose stack on `:8290` and **publish that port to the host** so the agent in kind can reach it via `host.docker.internal:8290` (or a NodePort / `extraHosts` entry). It is the only host-local MCP — the Splunk and Datadog MCPs are vendor-hosted and reached over the internet
+- [x] `generate/mcp-server/` package (lives with the rest of the Ballerina source under `generate/`). Note: the Phase 4 agent's `mcp_client.bal` is the client-side wiring — not part of this server
+- [x] No Ballerina MCP SDK exists — implemented Streamable HTTP MCP protocol directly (JSON-RPC 2.0 over POST to `/mcp`; `initialize` handshake, `tools/list`, `tools/call`)
+- [x] Same OTel instrumentation as the mesh services — `tracing.bal` wires jaeger + prometheus side-effect imports; the MCP's own calls show up in Datadog
+- [x] Runs in the Docker Compose stack on `:8290` with host port published; agent connects via `http://mcp-server:8290` inside the compose network
 
 ### 3.2 Service catalog source of truth
-Two options:
-- **Static YAML** committed to repo (`catalog/services.yaml`) — simpler, fine for demo
-- **Live discovery** by reading Docker labels — fancier but adds a Docker socket dependency
+**Implemented as a static in-code map** (`catalog.bal`) rather than YAML — all seven mesh services with exact dependency edges matching `phase-2-ballerina.md`, including the async `order → notification` NATS edge modelled in a separate `ASYNC_EDGES` map. Production comment included pointing to CMDB.
 
-Recommendation: **static YAML** for the POC, with a comment that production would discover from a real CMDB. Catalog fields per service: name, owner, slack channel, repo URL, runbook IDs, health endpoint, declared dependencies.
-
-The catalog must enumerate **all seven mesh services** (`store`, `customer`, `order`, `inventory`, `invoice`, `payment`, `notification`) with `dependencies` matching the topology in `phase-2-ballerina.md` — so `get_dependencies("payment-service", "downstream")` and friends return the real graph (e.g. `order` → customer/inventory/payment/invoice and the `order` → `notification` async edge).
+The catalog enumerates all seven services (`store`, `customer`, `order`, `inventory`, `invoice`, `payment`, `notification`) with owner, slack channel, repo URL, runbook IDs, SLA, health endpoint, and declared dependencies — `get_dependencies("order-service", "downstream")` returns `[customer, inventory, payment, invoice, notification]` correctly.
 
 ### 3.3 Correlation logic
-The interesting tool. `correlate_trace(trace_id)` is a **pure link + topology helper — it does NOT call vendor REST APIs.** The agent pulls the actual logs/traces through the official Splunk and Datadog MCPs (`splunk_run_query`, `get_datadog_trace`); this tool just tells it where to look. It should:
-1. Compute the Datadog APM deep-link URL `https://app.{dd_site}/apm/trace/{trace_id}` — read `dd_site` (e.g. `datadoghq.com`, `us5.datadoghq.com`) from a **config file, never hardcode it**
-2. Compute the Splunk search URL / SPL (`index=* trace_id={trace_id}`) pre-filled
-3. Return the topology-derived list of services likely involved (from the static catalog) so the agent knows where to search
-4. Return all of the above so the agent can *link to* Datadog/Splunk and then *fetch* the data via their MCPs
+**Implemented** (`correlation.bal`) as a pure link + topology helper — does NOT call vendor REST APIs. Agent pulls actual data via Splunk and Datadog MCPs; this tool tells it where to look:
+1. `buildDatadogTraceUrl(traceId, ddSite)` → `https://app.{dd_site}/apm/trace/{trace_id}` — `DD_SITE` read from env
+2. `buildSplunkSpl(traceId)` → pre-filled SPL `index=* trace_id="..." | table _time, service, trace_id, ...`
+3. `buildSplunkSearchUrl(traceId, splunkUrl)` → URL-encoded search link
+4. `inferInvolvedServices(traceId)` → returns all 7 mesh services (full catalog — no trace sampling yet)
 
-> Important: build this around the actual trace ID format you see in Datadog (64-bit vs 128-bit) — confirm during Phase 1's smoke test.
+Stub deploy log and incident history also live in `correlation.bal` — `find_recent_deploys` and `find_related_incidents` work against in-memory data.
+
+> Note: trace ID format (64-bit vs 128-bit Datadog) still needs confirmation during Phase 1 live smoke test.
 
 ### 3.4 Runbook execution
-- [ ] Runbooks live in `mcp-server/runbooks/*.bal` as Ballerina functions
-- [ ] Each runbook returns a streaming progress feed (use SSE so the agent can show intermediate steps)
-- [ ] Audit log: every `run_runbook` call appends to `audit.log` with who/what/when/result
+- [x] Runbooks live in `runbooks.bal` (4 runbooks: `restart-service`, `clear-cache`, `disable-chaos`, `freeze-deploys`)
+- [ ] SSE streaming not implemented — runbooks return a `string[]` steps array instead (sufficient for demo; the agent renders each step as text)
+- [x] Audit log: every `run_runbook` call appends to an isolated in-memory `auditLog` via `appendAudit`; `getAuditLog()` exposed for inspection
 
 ### 3.5 Auth
-- [ ] Bearer token check on every request (token in env var, same as Splunk/Datadog)
+- [ ] Bearer token check on every request (token in env var, same as Splunk/Datadog) — not yet implemented
 - [ ] If using API Manager MCP Gateway, defer auth to it
 
 ### 3.6 Verification
@@ -85,6 +83,13 @@ The interesting tool. `correlate_trace(trace_id)` is a **pure link + topology he
 - [ ] Call each tool, confirm responses
 - [ ] Run a chaos scenario in Phase 2 mesh, call `correlate_trace` with a real trace_id, confirm the returned Datadog + Splunk links work
 - [ ] Call `run_runbook("disable-chaos", { service: "payment-service" })`, confirm chaos resets
+
+### 3.7 Unit tests
+- [x] 22 `@test:Config` tests written and passing (`generate/mcp-server/tests/mcp_server_test.bal`)
+  - Catalog: lookup known/unknown, list count, dependency graph (downstream, upstream, both, leaf)
+  - Correlation: Datadog URL format, custom site, SPL content, infer services
+  - Deploy stub: find deploys for known/unknown service
+  - Runbooks: list count, `disable-chaos` present, execute 4 runbooks, unknown runbook errors, audit log populated
 
 ## Pitfalls
 

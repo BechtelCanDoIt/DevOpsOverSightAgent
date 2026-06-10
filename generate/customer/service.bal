@@ -19,7 +19,7 @@ type Customer record {|
 |};
 
 // ---- Postgres client (connection read from env, with compose defaults) ----
-final postgresql:Client db = check new (
+final postgresql:Client|error db = new (
     host = envOr("DB_HOST", "postgres"),
     port = check int:fromString(envOr("DB_PORT", "5432")),
     username = envOr("DB_USER", "poc"),
@@ -29,28 +29,32 @@ final postgresql:Client db = check new (
 
 // On startup: ensure the schema exists and seed ~5 customers (ids 1..5) when empty,
 // so order-service's varied customerIds resolve.
-function init() returns error? {
-    _ = check db->execute(`CREATE TABLE IF NOT EXISTS customers (
-        id SERIAL PRIMARY KEY,
-        name TEXT,
-        email TEXT
-    )`);
-
-    int count = check db->queryRow(`SELECT count(*) FROM customers`);
-    if count == 0 {
-        NewCustomer[] seed = [
-            {name: "Alice Johnson", email: "alice@example.com"},
-            {name: "Bob Smith", email: "bob@example.com"},
-            {name: "Carol Diaz", email: "carol@example.com"},
-            {name: "Dan Wright", email: "dan@example.com"},
-            {name: "Eve Park", email: "eve@example.com"}
-        ];
-        foreach NewCustomer c in seed {
-            _ = check db->execute(`INSERT INTO customers (name, email) VALUES (${c.name}, ${c.email})`);
+function init() {
+    do {
+        postgresql:Client dbClient = check db;
+        _ = check dbClient->execute(`CREATE TABLE IF NOT EXISTS customers (
+            id SERIAL PRIMARY KEY,
+            name TEXT,
+            email TEXT
+        )`);
+        int count = check dbClient->queryRow(`SELECT count(*) FROM customers`);
+        if count == 0 {
+            NewCustomer[] seed = [
+                {name: "Alice Johnson", email: "alice@example.com"},
+                {name: "Bob Smith", email: "bob@example.com"},
+                {name: "Carol Diaz", email: "carol@example.com"},
+                {name: "Dan Wright", email: "dan@example.com"},
+                {name: "Eve Park", email: "eve@example.com"}
+            ];
+            foreach NewCustomer c in seed {
+                _ = check dbClient->execute(`INSERT INTO customers (name, email) VALUES (${c.name}, ${c.email})`);
+            }
+            logInfo("seeded customers table");
         }
-        logInfo("seeded customers table");
+        logInfo("customer-service started");
+    } on fail var e {
+        logError("DB unavailable at startup — schema init skipped", e);
     }
-    logInfo("customer-service started");
 }
 
 // ---- Health ----
@@ -67,7 +71,8 @@ service /customers on mainListener {
         if injected is int {
             return chaosErrorResponse(injected);
         }
-        sql:ExecutionResult res = check db->execute(
+        postgresql:Client dbClient = check db;
+        sql:ExecutionResult res = check dbClient->execute(
             `INSERT INTO customers (name, email) VALUES (${payload.name}, ${payload.email})`);
         int|string? lastId = res.lastInsertId;
         int id = lastId is int ? lastId : check getLastCustomerId();
@@ -81,7 +86,8 @@ service /customers on mainListener {
         if injected is int {
             return chaosErrorResponse(injected);
         }
-        Customer|sql:Error result = db->queryRow(
+        postgresql:Client dbClient = check db;
+        Customer|sql:Error result = dbClient->queryRow(
             `SELECT id, name, email FROM customers WHERE id = ${id}`);
         if result is sql:NoRowsError {
             logInfo("customer not found");
@@ -98,7 +104,8 @@ service /customers on mainListener {
 
 // Fallback when the JDBC driver does not surface a generated key.
 isolated function getLastCustomerId() returns int|error {
-    int id = check db->queryRow(`SELECT max(id) FROM customers`);
+    postgresql:Client dbClient = check db;
+    int id = check dbClient->queryRow(`SELECT max(id) FROM customers`);
     return id;
 }
 

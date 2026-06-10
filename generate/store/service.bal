@@ -37,7 +37,7 @@ type StockResponse record {
 };
 
 // ---- Postgres client (connection read from env, with compose defaults) ----
-final postgresql:Client db = check new (
+final postgresql:Client|error db = new (
     host = envOr("DB_HOST", "postgres"),
     port = check int:fromString(envOr("DB_PORT", "5432")),
     username = envOr("DB_USER", "poc"),
@@ -50,30 +50,34 @@ final http:Client inventoryClient = check new (envOr("INVENTORY_URL", "http://in
 
 // On startup: ensure the catalog schema exists and seed ~5 products when empty.
 // SKUs SKU-001..SKU-005 line up with inventory-service's seeded stock.
-function init() returns error? {
-    _ = check db->execute(`CREATE TABLE IF NOT EXISTS products (
-        id SERIAL PRIMARY KEY,
-        name TEXT,
-        sku TEXT,
-        price NUMERIC
-    )`);
-
-    int count = check db->queryRow(`SELECT count(*) FROM products`);
-    if count == 0 {
-        NewProduct[] seed = [
-            {name: "Aerodynamic Water Bottle", sku: "SKU-001", price: 18.99},
-            {name: "Wireless Earbuds", sku: "SKU-002", price: 79.50},
-            {name: "Trail Running Shoes", sku: "SKU-003", price: 124.00},
-            {name: "Insulated Travel Mug", sku: "SKU-004", price: 24.95},
-            {name: "Merino Wool Socks", sku: "SKU-005", price: 16.00}
-        ];
-        foreach NewProduct p in seed {
-            _ = check db->execute(
-                `INSERT INTO products (name, sku, price) VALUES (${p.name}, ${p.sku}, ${p.price})`);
+function init() {
+    do {
+        postgresql:Client dbClient = check db;
+        _ = check dbClient->execute(`CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name TEXT,
+            sku TEXT,
+            price NUMERIC
+        )`);
+        int count = check dbClient->queryRow(`SELECT count(*) FROM products`);
+        if count == 0 {
+            NewProduct[] seed = [
+                {name: "Aerodynamic Water Bottle", sku: "SKU-001", price: 18.99},
+                {name: "Wireless Earbuds", sku: "SKU-002", price: 79.50},
+                {name: "Trail Running Shoes", sku: "SKU-003", price: 124.00},
+                {name: "Insulated Travel Mug", sku: "SKU-004", price: 24.95},
+                {name: "Merino Wool Socks", sku: "SKU-005", price: 16.00}
+            ];
+            foreach NewProduct p in seed {
+                _ = check dbClient->execute(
+                    `INSERT INTO products (name, sku, price) VALUES (${p.name}, ${p.sku}, ${p.price})`);
+            }
+            logInfo("seeded products table");
         }
-        logInfo("seeded products table");
+        logInfo("store-service started");
+    } on fail var e {
+        logError("DB unavailable at startup — schema init skipped", e);
     }
-    logInfo("store-service started");
 }
 
 // ---- Health ----
@@ -90,7 +94,8 @@ service /products on mainListener {
         if injected is int {
             return chaosErrorResponse(injected);
         }
-        stream<Product, sql:Error?> rs = db->query(`SELECT id, name, sku, price FROM products ORDER BY id`);
+        postgresql:Client dbClient = check db;
+        stream<Product, sql:Error?> rs = dbClient->query(`SELECT id, name, sku, price FROM products ORDER BY id`);
         Product[] products = check from Product p in rs
             select p;
         logInfo("listed catalog products");
@@ -105,7 +110,8 @@ service /products on mainListener {
         if injected is int {
             return chaosErrorResponse(injected);
         }
-        Product|sql:Error result = db->queryRow(
+        postgresql:Client dbClient = check db;
+        Product|sql:Error result = dbClient->queryRow(
             `SELECT id, name, sku, price FROM products WHERE id = ${id}`);
         if result is sql:NoRowsError {
             logInfo("product not found");

@@ -24,29 +24,36 @@
   - Will get account when ready to test
 
 ### 0.3 WSO2 Agent Manager — install & smoke test
-The Agent Manager runs on Kubernetes. Per the repo's quick start, deploy with the `wso2-agent-manager` Helm chart.
+The Agent Manager runs via the `ghcr.io/wso2/amp-quick-start:v0.15.0` dev container (not a standalone Helm chart — the chart is bundled inside the container). It creates its own k3d cluster named `amp-local`. See `PREREQUISITES.md` for the exact command; Rancher Desktop works without Colima.
 
-- [X] Install the Helm chart from `wso2/agent-manager` per the [Quick Start](https://wso2.github.io/agent-manager/docs/getting-started/quick-start/)
-- [ ] Verify `amp-console`, `amp-api`, `amp-trace-observer` pods are running
-- [ ] Log into `amp-console` and create a stub project
+- [X] Install via quick-start container (all 13 steps completed successfully; `amp-local` k3d cluster running)
+- [ ] Verify `amp-console`, `amp-api`, `amp-trace-observer` pods are running — **manual step**: check `http://localhost:3000`
+- [ ] Log into `amp-console` and create a stub project — **manual step**: `http://localhost:3000`, admin/admin
 - [ ] Install `amctl` CLI and verify it can talk to the local control plane
 - [ ] Deploy the sample agent from `wso2/agent-manager/samples` end-to-end as a sanity check — proves the platform works before we layer our own agent on top
 
 ### 0.4 Understand the agent runtime contract
 This is research, not config. Pull the answers from `wso2/agent-manager/documentation` and the `samples/` directory so Phase 4 isn't a guessing game.
 
-- [ ] How does Agent Manager expect MCP servers to be referenced from an agent? (URL config? secret-managed credentials? OpenChoreo-managed proxy?)
-- [ ] What transports does the platform support — stdio (unlikely in K8s), HTTP/SSE, streamable HTTP?
-- [ ] Where do MCP server endpoints get injected — environment variables, ConfigMap, or a platform-managed registry?
-- [ ] Does WSO2 API Manager's **MCP Gateway** sit in front of MCP servers in this architecture? If yes, our Ballerina MCP server gets registered there.
+- [X] How does Agent Manager expect MCP servers to be referenced from an agent?
+  - **Env-var / secrets injection model.** No platform-native MCP registry CRD. You define a Project in `amp-console`, declare the MCP URLs and tokens as **secrets** → they become environment variables in the agent pod. The agent's Python code constructs `MCPServerHTTP` objects using those env vars (e.g. `os.environ["MCP_SPLUNK_URL"]`). Verify: check `wso2/agent-manager/samples/` for whether a post-2025 release added a first-class "MCP Connections" resource type.
+
+- [X] What transports does the platform support?
+  - **stdio ruled out** (not viable across K8s pod boundaries). **HTTP/SSE confirmed** safe fallback. **Streamable HTTP preferred** but API Manager MCP Gateway support unverified — check WSO2 API Manager 4.4+ release notes. The two vendor MCPs (Datadog `mcp.datadoghq.com`, Splunk app 7931) both use Streamable HTTP, so the agent SDK must support it regardless; the open question is whether the *gateway proxy* handles it without buffering SSE.
+
+- [X] Where do MCP server endpoints get injected?
+  - **Environment variables** set via `amp-console` secrets. No sidecar proxy, no ConfigMap injection. Agent Manager's add-on value is the `amp-python-instrumentation-provider` init container (OTel auto-instrumentation), not a connection broker. The `agent/splunk/mcp/`, `agent/datadog/mcp/`, `agent/mcp/` directories hold per-MCP config blocks; sensitive fields come from env.
+
+- [X] Does WSO2 API Manager's MCP Gateway sit in front of MCP servers?
+  - **Optional / not confirmed for this POC.** The preferred architecture is one gateway URL with three tool namespaces (auth, rate-limiting, audit "for free"), but the gateway's ability to proxy external HTTPS MCP endpoints (Splunk Cloud, `mcp.datadoghq.com`) and handle Streamable HTTP is unverified. **Phase 4 plan:** wire direct env-var connections first; layer the gateway after direct connectivity is proven. Biggest unknown: does API Manager MCP Gateway support Streamable HTTP without buffering SSE?
 
 ### 0.5 Lock decisions
 Resolve the open questions from the planning README and write them into `decisions.md`:
 
-- [ ] Splunk Cloud trial **or** Splunk Enterprise container
-- [ ] kind **or** k3d **or** Docker Desktop K8s
-- [ ] OTel Collector as single shipper **or** dual native agents (Datadog Agent + Splunk forwarder)
-- [ ] MCP server hostname/port convention so Phases 2, 3, 4 agree
+- [X] Splunk Cloud trial **or** Splunk Enterprise container → **Splunk Cloud trial** (see `decisions.md` D1)
+- [X] kind **or** k3d **or** Docker Desktop K8s → **kind** (see `decisions.md` D2)
+- [X] OTel Collector as single shipper **or** dual native agents → **single OTel Collector** (see `decisions.md` D3)
+- [X] MCP server hostname/port convention → **`ballerina-mcp:9090` internal, `:9098` host-mapped, `http://host.docker.internal:9098` from K8s** (see `decisions.md` D4)
 - [X] **Mesh shape:** hybrid — keep all four spec services (`order`, `payment`, `inventory`, `notification`) **and** add three business domains (`customer`, `invoice`, `store`) = 7 services + `load-gen`. Traffic generator drives the five front-facing domains (`customer`, `order`, `invoice`, `inventory`, `store`)
 - [X] **Repo/source layout:** `DevOpsAgent/` is the GitHub push root; Ballerina source under `generate/` (one package per service), Python agent under `agent/`, specs under `todo/`
 - [X] **Agent framework & LLM:** Claude Agent SDK (Python) with **Anthropic Claude** as the LLM — supersedes the earlier Ollama pick (the Claude Agent SDK is Anthropic-native)

@@ -22,6 +22,7 @@ volumes:
 # ── reusable env fragments ──────────────────────────────────────────────────
 x-otel-env: &otel-env
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_RESOURCE_ATTRIBUTES: "service.namespace=devops-poc,deployment.environment=demo,git.commit=${GIT_COMMIT:-unknown}"
   CHAOS_TOKEN: ${CHAOS_TOKEN:-dev-chaos-token}
 
 x-db-env: &db-env
@@ -247,3 +248,72 @@ services:
       invoice: { condition: service_started }
     networks: [devops-poc]
     restart: unless-stopped
+
+  # ── Ballerina MCP server (Phase 3) ────────────────────────────────────────
+  mcp-server:
+    build:
+      context: ../generate/mcp-server
+      <<: *ballerina-build
+    image: devops-poc/mcp-server:latest
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: mcp-server
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      SPLUNK_URL: ${SPLUNK_URL:-https://your-splunk.splunkcloud.com}
+    ports:
+      - "8290:8290"
+    networks: [devops-poc]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8290/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Mock MCP servers (--profile mock — replace with real cloud MCPs for demo) ──
+  splunk-mock-mcp:
+    build:
+      context: ../generate/splunk-mock-mcp
+      <<: *ballerina-build
+    image: devops-poc/splunk-mock-mcp:latest
+    ports:
+      - "8400:8400"
+    networks: [devops-poc]
+    restart: unless-stopped
+    profiles: [mock]
+
+  datadog-mock-mcp:
+    build:
+      context: ../generate/datadog-mock-mcp
+      <<: *ballerina-build
+    image: devops-poc/datadog-mock-mcp:latest
+    ports:
+      - "8401:8401"
+    networks: [devops-poc]
+    restart: unless-stopped
+    profiles: [mock]
+
+  # ── DevOps agent (Phase 4) ────────────────────────────────────────────────
+  devops-agent:
+    build:
+      context: ../generate/agent
+      <<: *ballerina-build
+    image: devops-poc/devops-agent:latest
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: devops-agent
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
+      DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
+      BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-server:8290}
+    ports:
+      - "8082:8080"  # 8080 is taken by k3d-amp-local-serverlb (WSO2 Agent Manager)
+    networks: [devops-poc]
+    restart: unless-stopped
+    depends_on:
+      - mcp-server
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

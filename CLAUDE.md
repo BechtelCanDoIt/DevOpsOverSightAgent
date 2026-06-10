@@ -14,18 +14,18 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 
 ## Source layout
 
-- `generate/` — all Ballerina source, one package per directory (`generate/<x>/` → service `<x>-service`); plus `load-gen/` (traffic generator) and `mcp-server/` (custom Ballerina MCP).
-- `agent/` — Python agent + per-MCP connection config (`splunk/mcp/`, `datadog/mcp/`, `mcp/`).
+- `generate/` — all Ballerina source, one package per directory; includes 7 mesh services, `load-gen`, `mcp-server` (topology MCP), `agent` (DevOps agent), `splunk-mock-mcp`, and `datadog-mock-mcp`.
 - `compose/` — Docker Compose stack (Phase 1) · `catalog/` — MCP service catalog (Phase 3) · `demo/` — demo scripts (Phase 5) · `todo/` — phase specs.
 
-## Locked Decisions (Phase 0)
+## Locked Decisions (Phase 0 + override)
 
-- **LLM:** Anthropic Claude (the Claude Agent SDK is Anthropic-native)
-- **Agent framework:** Claude Agent SDK, **Python** (required for WSO2 Agent Manager auto-instrumentation)
+- **LLM:** Anthropic Claude — called directly via HTTP from Ballerina
+- **Agent framework:** **Ballerina** (overrides Phase 0 Python decision — entire stack is Ballerina; Ballerina OTel covers Agent Manager observability needs)
 - **Kubernetes:** kind cluster
 - **Splunk:** Cloud trial (not Enterprise container); telemetry ships via the OTel Collector's `splunk_hec` exporter
 - **Telemetry:** single OTel Collector fanning out to Splunk (HEC) + Datadog
 - **Mesh:** hybrid 7-service retail mesh + `load-gen` (see [`README.md`](README.md))
+- **Mock MCPs:** `splunk-mock-mcp` (port 8400) and `datadog-mock-mcp` (port 8401) stand in for live vendor MCPs until creds arrive; swapped via env vars with no code changes
 
 ## Commands (as implemented per phase)
 
@@ -34,10 +34,16 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 docker compose -f compose/docker-compose.yml up -d
 docker compose -f compose/docker-compose.yml ps
 
-# Phase 2 — Ballerina services (run individually during dev)
+# Phase 2/3/4 — Ballerina services (run individually during dev)
 cd generate/<service-name> && bal run
+cd generate/<service-name> && bal test
 
-# Phase 4 — Kind cluster + Agent Manager
+# Phase 4 — Trigger an investigation (agent running in compose)
+curl -X POST http://localhost:8080/investigate \
+  -H "Content-Type: application/json" \
+  -d '{"service":"payment-service","severity":"P1","description":"502 spike"}'
+
+# Phase 4 — Kind cluster + Agent Manager (optional)
 kind create cluster --name devops-agent
 helm install wso2-agent-manager wso2/agent-manager -n agent-manager --create-namespace
 amctl status
@@ -52,11 +58,11 @@ make rehearse
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 0 | Prerequisites & decisions | Mostly complete — tools verified, decisions locked |
-| 1 | Docker Compose observability stack | Scaffolded — compose stack + OTel Collector + Postgres init built (in Phase 2 to make the mesh runnable); collector exports to `debug` by default. Real Splunk/Datadog exporters + smoke test pending trial creds |
-| 2 | Ballerina service mesh + traffic generator | Mostly complete — 8 packages (7 services + load-gen) build clean & runtime-validated (health, JSON logs w/ `trace_id`, chaos toggles, NATS trace envelope). Live Datadog/Splunk verification (§2.7) deferred to test time (creds) |
-| 3 | Ballerina MCP server | Not started |
-| 4 | Python agent in WSO2 Agent Manager | Not started |
+| 0 | Prerequisites & decisions | Nearly complete — tools verified, all decisions locked (`decisions.md`), WSO2 Agent Manager installed. Remaining: manual console login + stub project + sample agent smoke test |
+| 1 | Docker Compose observability stack | Scaffolded — compose stack + OTel Collector + Postgres init built; local OTLP smoke test passing. Real Splunk/Datadog exporters + smoke test pending trial creds |
+| 2 | Ballerina service mesh + traffic generator | Mostly complete — 8 packages (7 services + load-gen) build clean & runtime-validated, 80 unit tests passing. Live Datadog/Splunk verification (§2.7) deferred to test time (creds) |
+| 3 | Ballerina MCP server | Mostly complete — 9-tool MCP server built & tested (22 tests), 4 runbooks, audit log, OTel instrumented, compose wired. Remaining: bearer-token auth, live inspector verification |
+| 4 | Ballerina agent (+ mock MCPs) | Mostly complete — Ballerina agent with Anthropic tool-use loop built & tested (8 tests); splunk-mock-mcp (8 tests) + datadog-mock-mcp (11 tests) built; all compose-wired. Remaining: end-to-end investigation test, Datadog webhook config, Agent Manager deploy (optional) |
 | 5 | Demo rehearsal & verification | Not started |
 
 Detailed exit criteria for each phase are in `todo/phase-<N>-*.md`.

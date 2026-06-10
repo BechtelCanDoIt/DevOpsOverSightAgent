@@ -49,15 +49,14 @@ isolated function parseTraceparent(string tp) returns [string, string] {
     return [parts[1], parts[2]];
 }
 
-// NATS subscriber: consumes order events and "sends" the confirmation (logged only).
-@nats:ServiceConfig {
-    subject: "orders.created"
-}
-service nats:Service on new nats:Listener(envOr("NATS_URL", "nats://nats:4222")) {
+// NATS consumer defined as a service object so init() can attach it to a
+// dynamically-created listener — prevents a connection failure from crashing
+// the module when NATS is unavailable (e.g. during unit tests).
+// Subject "orders.created" is passed to Listener.attach() rather than via
+// @nats:ServiceConfig because that annotation is not allowed on variables.
+final nats:Service orderConsumer = service object {
 
     remote function onMessage(nats:BytesMessage message) {
-        // Slow-consumer / backlog chaos: injected latency makes this consumer lag.
-        // There is no HTTP response here, so the returned status is intentionally ignored.
         _ = applyChaos();
 
         string raw = "";
@@ -66,19 +65,27 @@ service nats:Service on new nats:Listener(envOr("NATS_URL", "nats://nats:4222"))
             json payload = check value:fromJsonString(raw);
             OrderEvent event = check payload.cloneWithType(OrderEvent);
 
-            // Extract trace_id (32-hex) and span_id (16-hex) from the W3C traceparent:
-            //   00-<32-hex traceId>-<16-hex spanId>-01
             [string, string] [tid, sid] = parseTraceparent(event.traceparent);
             if tid == "" {
                 logError(string `bad traceparent in order event: ${event.traceparent}`);
                 return;
             }
 
-            // Emit the async confirmation under the SAME trace_id as the order, so
-            // Splunk stitches this consumer leg to the originating order trace.
             log:printInfo("notification sent", trace_id = tid, span_id = sid, order_id = event.orderId);
         } on fail error e {
             logError(string `failed to process order event: ${raw}`, e);
         }
+    }
+};
+
+// Start the NATS consumer inside init() so a connection failure degrades
+// gracefully rather than aborting module load.
+function init() {
+    do {
+        nats:Listener natsListener = check new (envOr("NATS_URL", "nats://nats:4222"));
+        check natsListener.attach(orderConsumer, "orders.created");
+        check natsListener.'start();
+    } on fail var e {
+        log:printWarn("NATS broker unreachable — order event consumer not started", 'error = e);
     }
 }

@@ -95,6 +95,8 @@ Read everything via `envOr(...)` so local `bal run` works with the defaults too.
 | `REDIS_HOST` `REDIS_PORT` | redis / 6379 | inventory |
 | `NATS_URL` | nats://nats:4222 | order, notification |
 | `CUSTOMER_URL` `INVENTORY_URL` `PAYMENT_URL` `INVOICE_URL` | `http://<svc>:9090` | order (all four), store (`INVENTORY_URL`) |
+| `OTEL_SERVICE_NAME` | `<x>-service` | all (set per-service in compose) |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=devops-poc,deployment.environment=demo,git.commit=<sha>` | all (set via `x-otel-env` anchor; `git.commit` comes from `GIT_COMMIT` build-arg at compose launch) |
 | `CHAOS_TOKEN` | dev-chaos-token | all (seeded chaos.bal) |
 
 DB names: `orderdb`, `customerdb`, `invoicedb`, `storedb`, `inventorydb`. `payment` and

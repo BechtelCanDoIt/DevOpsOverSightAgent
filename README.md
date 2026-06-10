@@ -1,6 +1,90 @@
 # DevOps Observability POC
 
-A local-first demo: a Ballerina retail microservice mesh emits traces, logs, and metrics through a single OTel Collector to **Splunk** (logs/traces) and **Datadog** (APM/metrics). A Python agent running under **WSO2 Agent Manager** correlates those signals over MCP to diagnose and remediate a chaos-induced incident.
+A local-first demo: a Ballerina retail microservice mesh emits traces, logs, and metrics through a single OTel Collector to **Splunk** (logs/traces) and **Datadog** (APM/metrics). A ballerina agent running under **WSO2 Agent Manager** correlates those signals over MCP to diagnose and remediate a chaos-induced incident.
+
+## Usage
+
+### Unit tests — no Docker, no keys needed
+
+```
+  make test-bal
+  This runs bal test across all 12 packages including the 4 new ones. You'll see pass/fail per package. Expected: 129 total passing (80 original + 49 new).
+
+  Individual packages:
+  cd generate/mcp-server && bal test        # 22 tests
+  cd generate/splunk-mock-mcp && bal test   # 8 tests
+  cd generate/datadog-mock-mcp && bal test  # 11 tests
+  cd generate/agent && bal test             # 8 tests
+```
+
+  ---
+### Run the full stack (mock mode — no Splunk/Datadog/Anthropic creds needed for health checks)
+
+```
+  make demo-mock-up
+  Then verify all four new services are up:
+  curl http://localhost:8082/health   # devops-agent
+  curl http://localhost:8290/health   # mcp-server
+  curl http://localhost:8400/health   # splunk-mock-mcp
+  curl http://localhost:8401/health   # datadog-mock-mcp
+```
+
+  ---
+### Inspect the MCP server tools interactively
+
+The Ballerina MCP server speaks **Streamable HTTP** (plain HTTP POST at `/mcp`) — not STDIO. The inspector must be told that explicitly; passing the URL as a positional arg to the CLI causes `spawn … ENOENT`.
+
+**Step-by-step:**
+
+1. Make sure `mcp-server` is running (`curl http://localhost:8290/health` → `{"status":"UP"}`).
+
+2. Start the inspector:
+   ```
+   make mcp-inspect
+   ```
+   The terminal will print something like:
+   ```
+   ⚙️  Proxy server listening on 127.0.0.1:6277
+   🔗 Open inspector with token pre-filled:
+      http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>
+   ```
+
+3. **Open that URL in your browser** (the token is already in the URL — just click it or paste it).
+
+4. In the browser UI, locate the connection panel at the top:
+   - **Transport** dropdown → select **`Streamable HTTP`**
+   - **URL** field → enter `http://127.0.0.1:8290/mcp`
+   - Click **Connect**
+
+   You should see `Connected` in green and the server info pane populate.
+
+5. Click the **Tools** tab → **List Tools**. You'll see all 9 tools (`list_services`, `lookup_service`, `get_dependencies`, `get_service_health`, `correlate_trace`, `find_recent_deploys`, `find_related_incidents`, `list_runbooks`, `run_runbook`).
+
+6. **Call a tool manually** — click any tool, fill in the inputs, click **Run Tool**:
+   - `list_services` — no inputs — returns all 7 mesh services
+   - `lookup_service` → `name: payment-service` — returns owner, deps, runbooks, SLA
+   - `get_dependencies` → `name: order-service`, `direction: downstream` — returns dependency graph
+   - `correlate_trace` → `trace_id: abc123` — returns Datadog + Splunk URLs for a trace
+
+7. Press `Ctrl-C` in the terminal to stop the inspector proxy when you're done.
+
+  ---
+### Trigger a live agent investigation (needs ANTHROPIC_API_KEY)
+
+```
+  Add your key to compose/.env:
+  ANTHROPIC_API_KEY=sk-ant-...
+  Restart: make demo-mock-up, then:
+  make investigate
+  The agent will call all three MCPs, run the tool-use loop against Claude, and return a JSON summary with its diagnosis. Takes ~30–60s depending on how many tool calls the agent makes.
+```
+
+  ---
+###  Teardown
+
+```
+  make demo-down
+```
 
 ## Repository layout
 
@@ -201,3 +285,4 @@ The incident-response **Python agent** (`agent/`) runs under WSO2 Agent Manager 
 - **[`CLAUDE.md`](CLAUDE.md)** — locked decisions, data flows, and known gotchas (trace-ID mismatch, NATS async propagation, SSE buffering, pod→compose reachability).
 - **[`architecture.md`](architecture.md)** — the deep dive: topology diagrams, telemetry fan-out, correlation and remediation flows.
 - **[`todo/README.md`](todo/README.md)** — the phased build plan and per-phase exit criteria.
+- **[`TESTS-README.md`](TESTS-README.md)** — per-service unit test inventory: every test name and what it covers.

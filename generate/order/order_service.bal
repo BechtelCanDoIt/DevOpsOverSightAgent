@@ -26,7 +26,7 @@ final http:Client paymentClient = check new (envOr("PAYMENT_URL", "http://paymen
 final http:Client invoiceClient = check new (envOr("INVOICE_URL", "http://invoice:9090"));
 
 // Postgres (orderdb). Queries auto-traced as child spans.
-final postgresql:Client db = check new (
+final postgresql:Client|error db = new (
     host = envOr("DB_HOST", "postgres"),
     port = check int:fromString(envOr("DB_PORT", "5432")),
     username = envOr("DB_USER", "poc"),
@@ -34,7 +34,7 @@ final postgresql:Client db = check new (
     database = envOr("DB_NAME", "orderdb"));
 
 // NATS publisher for the async order -> notification leg.
-final nats:Client natsClient = check new (envOr("NATS_URL", "nats://nats:4222"));
+final nats:Client|error natsClient = new (envOr("NATS_URL", "nats://nats:4222"));
 
 const string ORDERS_SUBJECT = "orders.created";
 
@@ -60,14 +60,19 @@ type ReserveResponse record {|
 // Startup: ensure the orders table exists.
 // ---------------------------------------------------------------------------
 
-function init() returns error? {
-    _ = check db->execute(`CREATE TABLE IF NOT EXISTS orders (
-        id TEXT PRIMARY KEY,
-        customer_id INT,
-        total NUMERIC,
-        status TEXT
-    )`);
-    logInfo("order-service initialized");
+function init() {
+    do {
+        postgresql:Client dbClient = check db;
+        _ = check dbClient->execute(`CREATE TABLE IF NOT EXISTS orders (
+            id TEXT PRIMARY KEY,
+            customer_id INT,
+            total NUMERIC,
+            status TEXT
+        )`);
+        logInfo("order-service initialized");
+    } on fail var e {
+        log:printWarn("DB unavailable at startup — schema init skipped", 'error = e);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +170,13 @@ service /orders on mainListener {
         // e. Persist the order (parameterized query).
         sql:ParameterizedQuery insert = `INSERT INTO orders (id, customer_id, total, status)
             VALUES (${orderId}, ${req.customerId}, ${total}, ${"confirmed"})`;
-        sql:ExecutionResult|error persisted = db->execute(insert);
+        postgresql:Client|error dbRef = db;
+        if dbRef is error {
+            log:printError("db unavailable", 'error = dbRef, trace_id = tid, span_id = sid,
+                    order_id = orderId);
+            return errorResponse(503, "db unavailable");
+        }
+        sql:ExecutionResult|error persisted = dbRef->execute(insert);
         if persisted is error {
             log:printError("order persist failed", 'error = persisted, trace_id = tid,
                     span_id = sid, order_id = orderId);
@@ -204,7 +215,8 @@ isolated function publishOrderCreated(string orderId, int customerId, decimal to
         total: total,
         traceparent: traceparent
     };
-    check natsClient->publishMessage({subject: ORDERS_SUBJECT, content: envelope});
+    nats:Client nc = check natsClient;
+    check nc->publishMessage({subject: ORDERS_SUBJECT, content: envelope});
 }
 
 // Builds a W3C traceparent header value from the active OTel trace/span IDs.

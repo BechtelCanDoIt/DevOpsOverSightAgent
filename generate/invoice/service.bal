@@ -6,7 +6,7 @@ import ballerinax/postgresql.driver as _;
 // Shared listener: hosts both /health and the business routes.
 listener http:Listener mainListener = new (9090);
 
-final postgresql:Client db = check new (
+final postgresql:Client|error db = new (
     host = envOr("DB_HOST", "postgres"),
     port = check int:fromString(envOr("DB_PORT", "5432")),
     username = envOr("DB_USER", "poc"),
@@ -58,14 +58,19 @@ isolated function newIssuedInvoice(int invoiceId, NewInvoice req) returns Invoic
     {invoiceId, orderId: req.orderId, amount: req.amount, status: "issued"};
 
 // Create the table on startup (idempotent).
-function init() returns error? {
-    _ = check db->execute(`CREATE TABLE IF NOT EXISTS invoices (
-        id SERIAL PRIMARY KEY,
-        order_id TEXT,
-        amount NUMERIC,
-        status TEXT
-    )`);
-    logInfo("invoice-service schema ready");
+function init() {
+    do {
+        postgresql:Client dbClient = check db;
+        _ = check dbClient->execute(`CREATE TABLE IF NOT EXISTS invoices (
+            id SERIAL PRIMARY KEY,
+            order_id TEXT,
+            amount NUMERIC,
+            status TEXT
+        )`);
+        logInfo("invoice-service schema ready");
+    } on fail var e {
+        logError("DB unavailable at startup — schema init skipped", e);
+    }
 }
 
 service /health on mainListener {
@@ -81,9 +86,10 @@ service /invoices on mainListener {
             return chaosErrorResponse(injected);
         }
         check validateNewInvoice(req);
+        postgresql:Client dbClient = check db;
         sql:ParameterizedQuery insert = `INSERT INTO invoices (order_id, amount, status)
             VALUES (${req.orderId}, ${req.amount}, 'issued') RETURNING id`;
-        int invoiceId = check db->queryRow(insert);
+        int invoiceId = check dbClient->queryRow(insert);
         logInfo(string `invoice issued: ${invoiceId} for order ${req.orderId}`);
         return newIssuedInvoice(invoiceId, req);
     }
@@ -94,8 +100,9 @@ service /invoices on mainListener {
         if injected is int {
             return chaosErrorResponse(injected);
         }
+        postgresql:Client dbClient = check db;
         sql:ParameterizedQuery q = `SELECT id, order_id, amount, status FROM invoices WHERE id = ${id}`;
-        InvoiceRow|sql:Error row = db->queryRow(q);
+        InvoiceRow|sql:Error row = dbClient->queryRow(q);
         if row is sql:NoRowsError {
             logInfo(string `invoice not found: ${id}`);
             return http:NOT_FOUND;
@@ -110,14 +117,15 @@ service /invoices on mainListener {
         if injected is int {
             return chaosErrorResponse(injected);
         }
+        postgresql:Client dbClient = check db;
         sql:ParameterizedQuery update = `UPDATE invoices SET status = 'paid' WHERE id = ${id}`;
-        sql:ExecutionResult res = check db->execute(update);
+        sql:ExecutionResult res = check dbClient->execute(update);
         if (res.affectedRowCount ?: 0) == 0 {
             logInfo(string `invoice not found for pay: ${id}`);
             return http:NOT_FOUND;
         }
         sql:ParameterizedQuery q = `SELECT id, order_id, amount, status FROM invoices WHERE id = ${id}`;
-        InvoiceRow r = check db->queryRow(q);
+        InvoiceRow r = check dbClient->queryRow(q);
         logInfo(string `invoice paid: ${id}`);
         return rowToInvoice(r);
     }

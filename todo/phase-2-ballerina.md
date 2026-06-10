@@ -55,7 +55,7 @@ Ballerina's observability module emits OTel-format data natively. Per service:
 - [X] Set `OTEL_SERVICE_NAME=<x>-service` per service so traces are labeled correctly
 - [X] Side-effect imports `ballerinax/jaeger` + `ballerinax/prometheus` in `tracing.bal` (per CONVENTIONS.md these two imports + the `Config.toml` settings are the full instrumentation wiring — no additional code is required)
 - [X] `obs.bal` provides `spanCtx()` + `logInfo()`/`logError()` so JSON logs carry `trace_id`/`span_id` — joins Datadog traces to Splunk logs
-- [ ] Add custom attributes for correlation: `service.namespace=devops-poc`, `deployment.environment=demo`, `git.commit` build-arg
+- [X] Add custom attributes for correlation: `service.namespace=devops-poc`, `deployment.environment=demo`, `git.commit` build-arg — via `OTEL_RESOURCE_ATTRIBUTES` in the `x-otel-env` compose anchor; propagates to all 8 services automatically
 - [ ] Confirm Ballerina SQL connector traces Postgres calls as child spans (verified once Phase 1 Splunk/Datadog smoke test is live)
 
 ### 2.3 Health endpoint
@@ -112,7 +112,7 @@ Each package has a `tests/` directory with `@test:Config` functions in the same 
 **Total: 80 `@test:Config` functions across 8 packages.**
 
 - [x] Tests written
-- [ ] `bal test` per package — run on a host with the Ballerina 2201.13.3 toolchain (sandbox in this session has no `bal`). Command per package: `cd generate/<svc> && /Library/Ballerina/bin/bal test`
+- [x] `bal test` per package — 80/80 passing across all 8 packages (2201.13.3). Required making infra clients non-crashing when offline: changed `final X = check new(...)` → `final X|error = new(...)` and wrapped `init()` in `do{} on fail{}`. Module-level variables require local copies before type-narrowing (Ballerina doesn't narrow module-level vars); `@nats:ServiceConfig` can't annotate a var, so notification uses `Listener.attach(svc, subject)` instead.
 
 ## Pitfalls
 
