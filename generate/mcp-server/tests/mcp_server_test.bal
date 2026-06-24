@@ -90,8 +90,15 @@ function testSplunkSplContainsTraceId() {
 }
 
 @test:Config {}
-function testInferInvolvedServicesReturnsAll() {
-    test:assertEquals(inferInvolvedServices("any").length(), 7);
+function testInferInvolvedServicesUnknownIdReturnsEmpty() {
+    test:assertEquals(inferInvolvedServices("unknown-trace").length(), 0);
+}
+
+@test:Config {}
+function testInferInvolvedServicesDemoIdReturnsFour() {
+    string[] svcs = inferInvolvedServices(DEMO_TRACE_ID);
+    test:assertEquals(svcs.length(), 4);
+    test:assertTrue(svcs.indexOf("payment-service") is int, "payment-service must be in demo services");
 }
 
 // Deploy stub tests

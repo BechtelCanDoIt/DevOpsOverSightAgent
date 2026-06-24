@@ -9,8 +9,8 @@
 # test executes. This script handles that lifecycle.
 #
 # Usage:
-#   ./runTests.sh                # run all eight services
-#   ./runTests.sh order payment  # run just the listed services
+#   ./runTests.sh                # run all twelve packages
+#   ./runTests.sh order payment  # run just the listed packages
 #   KEEP_UP=1 ./runTests.sh      # leave Postgres/Redis/NATS up after tests
 #   BAL=/path/to/bal ./runTests.sh
 #
@@ -27,7 +27,8 @@ cd "$REPO_ROOT"
 BAL="${BAL:-/Library/Ballerina/bin/bal}"
 COMPOSE_FILE="compose/docker-compose.yml"
 INFRA_SERVICES=(postgres redis nats)
-ALL_SERVICES=(order payment inventory notification customer store invoice load-gen)
+ALL_SERVICES=(order payment inventory notification customer store invoice load-gen \
+              agent mcp-server splunk-mock-mcp datadog-mock-mcp)
 
 # Allow narrowing to a subset of services via positional args.
 if [ "$#" -gt 0 ]; then

@@ -30,7 +30,7 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 ## Commands (as implemented per phase)
 
 ```bash
-# Phase 1 — Docker Compose stack
+# Phase 1 — Docker Compose stack (creds-free default; mocks + debug exporter)
 docker compose -f compose/docker-compose.yml up -d
 docker compose -f compose/docker-compose.yml ps
 
@@ -38,12 +38,22 @@ docker compose -f compose/docker-compose.yml ps
 cd generate/<service-name> && bal run
 cd generate/<service-name> && bal test
 
+# Run all 12 packages
+./runTests.sh
+
 # Phase 4 — Trigger an investigation (agent running in compose)
-curl -X POST http://localhost:8080/investigate \
+curl -X POST http://localhost:8082/investigate \
   -H "Content-Type: application/json" \
   -d '{"service":"payment-service","severity":"P1","description":"502 spike"}'
 
-# Phase 4 — Kind cluster + Agent Manager (optional)
+# Phase 4 — Inject chaos (payment-service chaos port published as 9196)
+curl -X POST http://localhost:9196/chaos/enable \
+  -H "X-Chaos-Token: dev-chaos-token"
+
+# Phase 5 — SaaS demo (requires DD_API_KEY, DD_SITE, SPLUNK_HEC_TOKEN, SPLUNK_HEC_URL, SPLUNK_INDEX in compose/.env)
+docker compose -f compose/docker-compose.yml -f compose/docker-compose.saas.yml --profile saas up -d
+
+# Phase 4 — Kind cluster + Agent Manager (optional / future)
 kind create cluster --name devops-agent
 helm install wso2-agent-manager wso2/agent-manager -n agent-manager --create-namespace
 amctl status

@@ -3,12 +3,13 @@
 This POC demonstrates an AI agent that diagnoses and remediates a production-style incident by
 correlating signals across **two real observability backends**. A Ballerina retail microservice
 mesh emits traces, logs, and metrics through a **single OpenTelemetry Collector** that fans out to
-**Splunk** (logs/traces) and **Datadog** (APM/metrics). A **Python agent running under WSO2 Agent
-Manager** reaches all three signal sources over **MCP** (Model Context Protocol) — the official
-Splunk MCP, the official Datadog MCP, and a **custom Ballerina MCP** that owns the service catalog,
-cross-system trace correlation, and scoped remediation runbooks. The headline scenario: an operator
-injects chaos into `payment-service`, a Datadog monitor fires, and the agent investigates
-end-to-end, proposes a runbook, and — after human approval — remediates and writes a postmortem.
+**Splunk** (logs/traces) and **Datadog** (APM/metrics). A **Ballerina agent** calls **Anthropic
+Claude** directly via HTTP and reaches all three signal sources over **MCP** (Model Context
+Protocol) — Splunk mock MCP, Datadog mock MCP (swapped for official MCPs when SaaS creds arrive),
+and a **custom Ballerina MCP** that owns the service catalog, cross-system trace correlation, and
+scoped remediation runbooks. The headline scenario: an operator injects chaos into
+`payment-service`, a Datadog monitor fires, and the agent investigates end-to-end, proposes a
+runbook, and — after human approval — remediates and writes a postmortem.
 
 > This document is the deep-dive architecture reference. For component-by-component descriptions and
 > getting-started instructions, see the root [`README.md`](README.md). The authoritative
@@ -23,8 +24,8 @@ host network:
 
 | Tier | Runtime | Contains | Built in |
 |------|---------|----------|----------|
-| **Workload + observability** | Docker Compose (bridge network `devops-poc`) | 7-service Ballerina mesh, `load-gen`, OTel Collector, Datadog Agent, NATS, Postgres, Redis, (optional Jaeger), Ballerina MCP server | Phases 1–3 |
-| **Agent** | Kubernetes (kind) under WSO2 Agent Manager | Python agent (auto-instrumented), Splunk MCP, Datadog MCP, client wiring to the Ballerina MCP, optional API Manager MCP Gateway | Phase 4 |
+| **Workload + observability** | Docker Compose (bridge network `devops-poc`) | 7-service Ballerina mesh, `load-gen`, OTel Collector, Datadog Agent, NATS, Postgres, Redis, (optional Jaeger), Ballerina MCP server, mock MCP servers | Phases 1–3 |
+| **Agent** | Docker Compose (same stack) or Kubernetes (kind, optional) | Ballerina agent (OTel-instrumented), calling Anthropic Claude; mock Splunk/Datadog MCPs until SaaS creds arrive | Phase 4 |
 
 Telemetry leaves the Compose tier for two SaaS backends — **Splunk Cloud trial** and **Datadog
 SaaS** — neither of which runs locally. The agent tier sits above both and treats Splunk, Datadog,

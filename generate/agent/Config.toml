@@ -3,9 +3,9 @@
 
 [devopspoc.devops_agent]
 # MCP server URLs — override with env vars in compose
-splunkMcpUrl = "http://splunk-mock-mcp:8400/mcp"
-datadogMcpUrl = "http://datadog-mock-mcp:8401/mcp"
-ballerinaTopologyMcpUrl = "http://mcp-server:8290/mcp"
+splunkMcpUrl = "http://splunk-mock-mcp:8400"
+datadogMcpUrl = "http://datadog-mock-mcp:8401"
+ballerinaTopologyMcpUrl = "http://mcp-server:8290"
 
 [ballerina.log]
 format = "json"

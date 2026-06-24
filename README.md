@@ -92,8 +92,7 @@ The Ballerina MCP server speaks **Streamable HTTP** (plain HTTP POST at `/mcp`) 
 |------|----------|
 | [`README.md`](README.md) · [`architecture.md`](architecture.md) · [`CLAUDE.md`](CLAUDE.md) | This file (component reference); deep-dive architecture; Claude Code guidance + locked decisions |
 | `todo/` | Authoritative phase specs (`phase-0` … `phase-5`) — start with [`todo/README.md`](todo/README.md) |
-| `generate/` | Ballerina source — one package per service + `load-gen` + `mcp-server` |
-| `agent/` | Python agent (Phase 4) and per-MCP connection config |
+| `generate/` | Ballerina source — one package per service + `load-gen` + `mcp-server` + `agent` + two mock MCPs |
 | `compose/` | Docker Compose observability stack (Phase 1) |
 | `catalog/` | Service catalog YAML for the Ballerina MCP (Phase 3) |
 | `demo/` | Demo script + chaos inject/reset scripts (Phase 5) |
@@ -112,7 +111,7 @@ This POC is built phase-by-phase. See [`todo/README.md`](todo/README.md) for the
 
 The system has two tiers. A **workload tier** (Docker Compose) runs the seven-service Ballerina retail mesh plus the infrastructure it depends on (Postgres, Redis, NATS) and the telemetry pipeline (a single OTel Collector fanning out to Splunk and Datadog). 
 
-An **agent tier** (Kubernetes/kind, under WSO2 Agent Manager) runs a Python incident-response agent that reaches three MCP servers — Splunk, Datadog, and the custom Ballerina MCP — to correlate signals and remediate.
+An **agent tier** (WSO2 Agent Manager on Kubernetes/kind) runs a **Ballerina** incident-response agent that reaches three MCP servers — Splunk, Datadog, and the custom Ballerina MCP — to correlate signals and remediate.
 
 For the deep dive — full topology diagrams, the telemetry fan-out, the trace-correlation flow, and the propose-before-act remediation loop — see **[`architecture.md`](architecture.md)**. This README is the component reference and getting-started; it does not duplicate those diagrams.
 
@@ -229,17 +228,17 @@ The agent reaches three MCP servers — two official, one custom — preferably 
 
 - **Server:** the official *MCP Server for Splunk platform* (Splunkbase app 7931, "Splunk Supported") — installed on your **Splunk Cloud** deployment, not run locally. Streamable HTTP at the app-generated HTTPS endpoint; auth via an MCP bearer token minted in the app (RBAC capability `mcp_tool_execute`).
 - **Role / tools:** log search via SPL — `splunk_run_query` (e.g. `index=* trace_id="<id>"`), plus `splunk_get_indexes`, `splunk_get_knowledge_objects`. There's no per-trace tool — trace lookups are just SPL.
-- **Wiring:** connection config under `agent/splunk/mcp/`. Splunk is a **Cloud trial** (not in the compose stack); telemetry ships there via the Collector's `splunk_hec` exporter.
+- **Wiring:** the agent connects via `SPLUNK_MCP_URL` env var; `splunk-mock-mcp` (`:8400`) is the default until live creds arrive. Splunk Cloud trial receives telemetry via the Collector's `splunk_hec` exporter.
 
 ### Datadog MCP (official)
 
 - **Server:** the official *Datadog MCP Server* (Bits AI) — **remote-hosted** by Datadog at `https://mcp.datadoghq.com/api/unstable/mcp-server/mcp` (regional per `DD_SITE`; in Preview, under `/api/unstable/` — pin it). Streamable HTTP; auth via OAuth 2.0 or `DD_API_KEY` + `DD_APPLICATION_KEY` headers. Toolsets selected via `?toolsets=apm,...`.
 - **Role / tools (real names):** metrics — `get_datadog_metric`, `search_datadog_metrics`; errors — `search_datadog_error_tracking_issues`; APM traces — `get_datadog_trace` (full trace by ID), `apm_search_spans`; logs — `search_datadog_logs`; monitors — `search_datadog_monitors`. (Our earlier `get_service_metrics` / `get_service_errors` were placeholder guesses — these are the actual tools.)
-- **Wiring:** connection config under `agent/datadog/mcp/`.
+- **Wiring:** the agent connects via `DATADOG_MCP_URL` env var; `datadog-mock-mcp` (`:8401`) is the default until live creds arrive.
 
 ### Ballerina MCP (custom)
 
-The glue between Splunk and Datadog: it owns the **service catalog, dependency graph, cross-system correlation, and scoped runbook execution**. Built in Ballerina (so it can both *know* topology and *act* on it), it runs over **Streamable HTTP on `:8290`** (HTTP/SSE fallback). Source lives in `generate/mcp-server/`; the client-side wiring the agent uses to reach it is in `agent/mcp/`. Same OTel instrumentation as the mesh, so its own calls show up in Datadog. See [`todo/phase-3-mcp.md`](todo/phase-3-mcp.md).
+The glue between Splunk and Datadog: it owns the **service catalog, dependency graph, cross-system correlation, and scoped runbook execution**. Built in Ballerina (so it can both *know* topology and *act* on it), it runs over **Streamable HTTP on `:8290`** (HTTP/SSE fallback). Source lives in `generate/mcp-server/`; the agent connects via `generate/agent/mcp_client.bal` using `BALLERINA_TOPOLOGY_MCP_URL`. Same OTel instrumentation as the mesh, so its own calls show up in Datadog. See [`todo/phase-3-mcp.md`](todo/phase-3-mcp.md).
 
 **Tool catalog:**
 
@@ -270,13 +269,49 @@ The glue between Splunk and Datadog: it owns the **service catalog, dependency g
 
 ## Agent (client)
 
-The incident-response **Python agent** (`agent/`) runs under WSO2 Agent Manager on Kubernetes/kind. See [`todo/phase-4-agent.md`](todo/phase-4-agent.md).
+The incident-response **Ballerina agent** (`generate/agent/`) runs under WSO2 Agent Manager on Kubernetes/kind. See [`todo/phase-4-agent.md`](todo/phase-4-agent.md).
 
-- **Framework / LLM:** Python, built on the **Claude Agent SDK** (native MCP client; first-class under Agent Manager). The LLM is **Anthropic Claude** — the SDK is Anthropic-native, which supersedes the earlier Ollama pick. Packaged via `agent/pyproject.toml` + `agent/Dockerfile` (Python 3.11).
-- **MCP wiring:** connects to all three MCP servers — Splunk (`agent/splunk/mcp/`), Datadog (`agent/datadog/mcp/`), and the custom Ballerina MCP (client wiring in `agent/mcp/`, server in `generate/mcp-server/`). Preferred model: a **single API Manager MCP Gateway URL with three tool namespaces** (auth via the gateway); the fallback is three direct MCP connections each with its own URL + token.
-- **Behavior / guardrail:** the system prompt drives a fixed triage loop — check the alert → pull recent metrics → correlate to logs by `trace_id` → consult topology for blast radius → **propose a runbook before running it** → summarize. The **propose-before-act** guardrail is hard: the agent must call `list_runbooks` and present its choice for human approval *before* it may call `run_runbook`. Max turns and budget caps are configured.
-- **Triggers:** a **Datadog-monitor webhook** (`Datadog monitor → HTTP webhook → agent endpoint` — the realistic path used in the live demo) or the CLI `agent investigate --alert-id X` (the fallback).
-- **Self-observability (the meta-win):** the agent is auto-instrumented by `amp-instrumentation` (injected at pod startup by the `amp-python-instrumentation-provider` init container — **no manual OTel**), so its full reasoning trace, per-LLM-call latency, token usage, and tool-call durations are visible in `amp-trace-observer`. The agent watches the workload while Agent Manager watches the agent.
+- **Framework / LLM:** Ballerina, calling **Anthropic Claude** (Messages API tool-use loop) directly via HTTP — no SDK required. Packaged as a Docker image built from `generate/agent/Dockerfile`. OTel instrumentation is native (same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services).
+- **MCP wiring:** connects to all three MCP servers via `generate/agent/mcp_client.bal` — Splunk mock MCP (`:8400`), Datadog mock MCP (`:8401`), and the custom Ballerina MCP (`:8290`). URLs are injected as env vars so swapping to live vendor MCPs requires only `.env` / amp-console secret changes — no code changes.
+- **Behavior / guardrail:** the system prompt drives a fixed 10-step triage loop — monitors → metrics → trace → correlate → logs → blast radius → deploys → history → **propose a runbook before running it** → summarize. The **propose-before-act** guardrail is hard: the agent must call `list_runbooks` and present its choice for human approval *before* it may call `run_runbook`. Max turns (`20`) and model (`claude-sonnet-4-6`) are configurable via env vars.
+- **Triggers:** `POST /investigate` (structured alert body) or `POST /webhook/alert` (Datadog webhook format) — both exposed on `:8080`. In the live demo, a **Datadog-monitor webhook** fires `POST /webhook/alert` automatically when the `payment-service` error rate exceeds threshold.
+- **Self-observability (the meta-win):** the agent's OTel spans flow through the same OTel Collector as the mesh — its reasoning trace, per-LLM-call latency, and tool-call durations are visible in Datadog alongside the workload it's diagnosing. The agent watches the workload; Datadog watches the agent.
+
+### WSO2 Agent Manager — quick-start
+
+Agent Manager runs via a self-contained Docker quick-start container. It creates its own internal k3d cluster. This is **separate** from the `devops-poc` compose stack — the agent pod reaches compose services via `host.docker.internal`.
+
+```bash
+# Install (15–20 min — downloads k3d + Agent Manager control plane)
+# Rancher Desktop supports --network=host; Colima setup from the official docs is not needed.
+docker run --rm --name amp-quick-start \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --network=host \
+  ghcr.io/wso2/amp-quick-start:v0.15.0 \
+  ./install.sh
+
+# Console: http://localhost:3000  (amp-admin / amp-admin)
+# Observability gateway: http://localhost:22893/otel
+# Uninstall (keep cluster): ./uninstall.sh inside the container
+# Uninstall + delete cluster: ./uninstall.sh --delete-cluster
+```
+
+Once the control plane is up:
+
+1. **Build the agent image:** `docker compose -f compose/docker-compose.yml build devops-agent`
+2. **Create a Project** in amp-console (`http://localhost:3000`)
+3. **Define an Internal Agent** pointing at `devops-poc/devops-agent:latest` with `imagePullPolicy: IfNotPresent`
+4. **Configure secrets** in amp-console — the pod picks these up as env vars:
+
+| Secret | Value (for mock mode) |
+|--------|----------------------|
+| `ANTHROPIC_API_KEY` | your key |
+| `SPLUNK_MCP_URL` | `http://host.docker.internal:8400` |
+| `DATADOG_MCP_URL` | `http://host.docker.internal:8401` |
+| `BALLERINA_TOPOLOGY_MCP_URL` | `http://host.docker.internal:8290` |
+
+5. **Deploy** — verify `GET http://localhost:8082/health` → `{"status":"UP"}`
+6. **Trigger an investigation:** `curl -X POST http://localhost:8082/investigate -H "Content-Type: application/json" -d '{"service":"payment-service","severity":"P1","description":"502 spike"}'`
 
 ---
 

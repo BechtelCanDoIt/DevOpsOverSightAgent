@@ -125,7 +125,7 @@ services:
       OTEL_SERVICE_NAME: store-service
       DB_NAME: storedb
       INVENTORY_URL: http://inventory:9090
-    ports: ["9091:9090"]
+    ports: ["9091:9090", "9191:9099"]
     depends_on:
       otel-collector: { condition: service_started }
       postgres: { condition: service_healthy }
@@ -140,7 +140,7 @@ services:
       <<: [*otel-env, *db-env]
       OTEL_SERVICE_NAME: customer-service
       DB_NAME: customerdb
-    ports: ["9092:9090"]
+    ports: ["9092:9090", "9192:9099"]
     depends_on:
       otel-collector: { condition: service_started }
       postgres: { condition: service_healthy }
@@ -159,7 +159,7 @@ services:
       PAYMENT_URL: http://payment:9090
       INVOICE_URL: http://invoice:9090
       NATS_URL: nats://nats:4222
-    ports: ["9093:9090"]
+    ports: ["9093:9090", "9193:9099"]
     depends_on:
       otel-collector: { condition: service_started }
       postgres: { condition: service_healthy }
@@ -180,7 +180,7 @@ services:
       DB_NAME: inventorydb
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-    ports: ["9094:9090"]
+    ports: ["9094:9090", "9194:9099"]
     depends_on:
       otel-collector: { condition: service_started }
       postgres: { condition: service_healthy }
@@ -195,7 +195,7 @@ services:
       <<: [*otel-env, *db-env]
       OTEL_SERVICE_NAME: invoice-service
       DB_NAME: invoicedb
-    ports: ["9095:9090"]
+    ports: ["9095:9090", "9195:9099"]
     depends_on:
       otel-collector: { condition: service_started }
       postgres: { condition: service_healthy }
@@ -208,7 +208,7 @@ services:
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: payment-service
-    ports: ["9096:9090"]
+    ports: ["9096:9090", "9196:9099"]
     depends_on:
       otel-collector: { condition: service_started }
     networks: [devops-poc]
@@ -221,7 +221,7 @@ services:
       <<: *otel-env
       OTEL_SERVICE_NAME: notification-service
       NATS_URL: nats://nats:4222
-    ports: ["9097:9090"]
+    ports: ["9097:9090", "9197:9099"]
     depends_on:
       otel-collector: { condition: service_started }
       nats: { condition: service_healthy }
@@ -270,7 +270,8 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── Mock MCP servers (--profile mock — replace with real cloud MCPs for demo) ──
+  # ── Mock MCP servers — default until real SaaS creds arrive ─────────────────
+  # (swap via SPLUNK_MCP_URL / DATADOG_MCP_URL env vars when real MCPs are ready)
   splunk-mock-mcp:
     build:
       context: ../generate/splunk-mock-mcp
@@ -280,7 +281,6 @@ services:
       - "8400:8400"
     networks: [devops-poc]
     restart: unless-stopped
-    profiles: [mock]
 
   datadog-mock-mcp:
     build:
@@ -291,7 +291,6 @@ services:
       - "8401:8401"
     networks: [devops-poc]
     restart: unless-stopped
-    profiles: [mock]
 
   # ── DevOps agent (Phase 4) ────────────────────────────────────────────────
   devops-agent:
@@ -312,6 +311,8 @@ services:
     restart: unless-stopped
     depends_on:
       - mcp-server
+      - splunk-mock-mcp
+      - datadog-mock-mcp
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s

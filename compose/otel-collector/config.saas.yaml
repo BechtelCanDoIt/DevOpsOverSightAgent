@@ -1,0 +1,106 @@
+# OpenTelemetry Collector — SaaS fan-out config (Phase 5 demo).
+#
+# Requires in compose/.env:
+#   DD_API_KEY=<your-datadog-api-key>
+#   DD_SITE=datadoghq.com          # or datadoghq.eu etc.
+#   SPLUNK_HEC_TOKEN=<your-token>
+#   SPLUNK_HEC_URL=https://<host>.splunkcloud.com:8088
+#   SPLUNK_INDEX=main
+#
+# Use via:
+#   docker compose -f compose/docker-compose.yml -f compose/docker-compose.saas.yml --profile saas up -d
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: ballerina-mesh
+          scrape_interval: 15s
+          static_configs:
+            - targets:
+                - store:9797
+                - customer:9797
+                - order:9797
+                - inventory:9797
+                - invoice:9797
+                - payment:9797
+                - notification:9797
+                - load-gen:9797
+
+  filelog:
+    include:
+      - /var/lib/docker/containers/*/*-json.log
+    operators:
+      - type: json_parser
+        parse_from: body
+      - type: move
+        from: attributes.log
+        to: body
+
+processors:
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: demo
+        action: upsert
+      - key: service.namespace
+        value: devops-poc
+        action: upsert
+  transform/servicename:
+    trace_statements:
+      - context: resource
+        statements:
+          - replace_pattern(attributes["service.name"], "_service$", "-service")
+    metric_statements:
+      - context: resource
+        statements:
+          - replace_pattern(attributes["service.name"], "_service$", "-service")
+
+exporters:
+  debug:
+    verbosity: normal
+
+  datadog:
+    api:
+      key: ${env:DD_API_KEY}
+      site: ${env:DD_SITE}
+
+  splunk_hec:
+    token: ${env:SPLUNK_HEC_TOKEN}
+    endpoint: ${env:SPLUNK_HEC_URL}
+    source: otel-collector
+    index: ${env:SPLUNK_INDEX}
+    tls:
+      insecure_skip_verify: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/servicename, resource, batch]
+      exporters: [debug, datadog, splunk_hec]
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, transform/servicename, resource, batch]
+      exporters: [debug, datadog]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, splunk_hec]

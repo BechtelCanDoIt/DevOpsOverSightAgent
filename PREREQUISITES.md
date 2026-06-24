@@ -47,20 +47,22 @@ brew install python@3.12   # 3.14 also works
 
 ## WSO2 Agent Manager (Phase 0.3 smoke test)
 
-Agent Manager is bootstrapped via a self-contained Docker quick-start container (v0.15.0). It creates its own k3d cluster internally — this is separate from the `devops-agent` kind cluster used for Phase 4.
+Agent Manager is bootstrapped via a self-contained Docker quick-start container (v0.16.0). It creates its own k3d cluster internally — this is separate from the `devops-agent` kind cluster used for Phase 4.
 
-**macOS note:** Rancher Desktop supports `--network=host` — the Colima setup in the official docs is not required with Rancher Desktop.
+**macOS note:** Uses Colima internally (the container manages its own Colima profile named `agent-manager`). Rancher Desktop can be the host Docker runtime.
 
 ```bash
 # Pull and run the quick-start (15–20 min; downloads k3d, OpenChoreo, Agent Manager)
-docker run --rm --name amp-quick-start \
+docker run --rm -it --name amp-quick-start \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --network=host \
-  ghcr.io/wso2/amp-quick-start:v0.15.0 \
+  ghcr.io/wso2/amp-quick-start:v0.16.0 \
   ./install.sh
 
-# Console: http://localhost:3000  (admin / admin)
-# Uninstall: re-run container with ./uninstall.sh
+# Console: http://localhost:3000  (amp-admin / amp-admin)
+# Observability gateway (traces): http://localhost:22893/otel
+# Uninstall (keep cluster): run ./uninstall.sh inside the container
+# Uninstall + delete cluster:  ./uninstall.sh --delete-cluster
 ```
 
 ## Secrets needed (not yet provisioned)

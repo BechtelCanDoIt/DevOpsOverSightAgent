@@ -64,15 +64,15 @@ All architecture and tooling choices that Phases 1–5 depend on. Treat these as
 
 ## D6 — Repo layout
 
-**Decision:** `DevOpsAgent/` is the GitHub push root. Ballerina source under `generate/` (one package per service), Python agent under `agent/`, phase specs under `todo/`, compose stack under `compose/`.
+**Decision:** `DevOpsAgent/` is the GitHub push root. Ballerina source under `generate/` (one package per service, including the agent), phase specs under `todo/`, compose stack under `compose/`.
 
 ---
 
 ## D7 — Agent framework and LLM
 
-**Decision:** [Claude Agent SDK](https://github.com/anthropics/claude-code) in Python + **Anthropic Claude** (latest capable model at demo time).
+**Decision:** **Ballerina** agent calling **Anthropic Claude** directly via HTTP (overrides Phase 0 Python + Claude Agent SDK selection). Entire stack — mesh services, MCP servers, mock MCPs, and agent — is Ballerina. OTel instrumentation is native via `ballerinax/jaeger` + `ballerinax/prometheus`.
 
-**Rationale:** WSO2 Agent Manager's auto-instrumentation (`amp-python-instrumentation-provider`) injects the OTel init container at the Python level — the agent must be Python. The Claude Agent SDK is Anthropic-native and the only SDK with first-class support for multi-MCP orchestration and the propose-before-act human-approval loop the demo requires. Ollama (the earlier pick) does not support the Agent SDK.
+**Rationale:** Keeping the stack in a single language removes the Python runtime, the `amp-python-instrumentation-provider` init container, and the Agent SDK dependency. Ballerina's built-in HTTP client makes the Anthropic tool-use loop straightforward; the mock-MCP architecture means WSO2 Agent Manager is not required for local development or the demo. WSO2 Agent Manager remains an optional future integration (see Phase 0.3).
 
 ---
 

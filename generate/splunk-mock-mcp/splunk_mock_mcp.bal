@@ -79,7 +79,7 @@ function callSplunkTool(string name, json arguments) returns json|error {
     if name == "splunk_run_query" {
         string query = (check arguments.query).toString();
         int maxResults = 100;
-        json mr = check arguments.max_results;
+        json|error mr = arguments.max_results;
         if mr is int {
             maxResults = mr;
         }

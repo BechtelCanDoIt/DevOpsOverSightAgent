@@ -13,7 +13,11 @@ isolated function buildSplunkSearchUrl(string traceId, string splunkUrl) returns
     return string `${splunkUrl}/search?q=${encoded}`;
 }
 
-isolated function inferInvolvedServices(string _traceId) returns string[] => listAllServices();
+final string DEMO_TRACE_ID = "abc123def456789012345678deadbeef";
+final string[] & readonly DEMO_TRACE_SERVICES = ["order-service", "customer-service", "inventory-service", "payment-service"];
+
+isolated function inferInvolvedServices(string traceId) returns string[] =>
+    traceId == DEMO_TRACE_ID ? DEMO_TRACE_SERVICES.clone() : [];
 
 type DeployRecord record {|
     string 'service;

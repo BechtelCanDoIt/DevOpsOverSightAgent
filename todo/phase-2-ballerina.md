@@ -44,7 +44,7 @@ store ─► inventory
 ### 2.1 Ballerina project layout
 - [X] All packages live under `generate/` (exists). All **eight** dirs present: `order`, `payment`, `inventory`, `customer`, `invoice`, `store`, `notification`, `load-gen`
 - [X] One Ballerina package per service dir, each with `Ballerina.toml`, `Dockerfile`, and `*.bal` source
-- [X] Org slug renamed project-wide from `fidelitypoc` → `devopspoc` (all `Ballerina.toml` + `Dependencies.toml`)
+- [X] Org slug renamed project-wide from old name → `devopspoc` (all `Ballerina.toml` + `Dependencies.toml`)
 - [X] Shared `Ballerina.toml` conventions: `observabilityIncluded = true`; OTel exporter endpoint via `Config.toml` / env (`OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317`)
 - [X] Each service has its own `Dockerfile` (two-stage build, base image's Java 21 runtime)
 - [X] Each service wired into `compose/docker-compose.yml` with build context `../generate/<svc>`
@@ -66,7 +66,7 @@ Implemented in the seeded `chaos.bal` (auth-token gated via `X-Chaos-Token`, int
 - [X] `POST /chaos/latency` body `{ "ms": 2000, "duration_s": 60 }` → injects latency for the window
 - [X] `POST /chaos/error` body `{ "rate": 0.3, "status": 502 }` → returns the status for that fraction of requests
 - [X] `POST /chaos/reset` → back to normal
-- [ ] Operator-facing reachability of `/chaos/*` from host scripts (publish `:9099` on the host or via a NodePort/`extraHosts` rule) — small follow-on once Phase 5 demo scripts go in
+- [x] Operator-facing reachability of `/chaos/*` from host scripts — host ports 9191–9197 published in compose (e.g. `curl http://localhost:9196/chaos/enable` hits payment-service)
 
 These are the levers the Phase 5 demo script pulls to create the incident the agent will diagnose. The headline scenario targets `payment-service`.
 
