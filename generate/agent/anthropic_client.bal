@@ -40,12 +40,8 @@ function runAgentLoop(
     int maxTurns
 ) returns string|error {
     // AMP injects ANTHROPIC_URL pointing to its AI gateway proxy; fall back to direct.
+    // The unique path hash in ANTHROPIC_URL is AMP's gateway auth; x-api-key passes through.
     string anthropicBaseUrl = envOr("ANTHROPIC_URL", "https://api.anthropic.com");
-    // AMP's gateway authenticates agents with AMP_AGENT_API_KEY; the raw Anthropic key
-    // is used by the gateway itself on the backend. Outside AMP, apiKey is used directly.
-    string effectiveApiKey = anthropicBaseUrl != "https://api.anthropic.com"
-        ? envOr("AMP_AGENT_API_KEY", apiKey)
-        : apiKey;
     http:Client anthropicClient = check new (anthropicBaseUrl, timeout = 120);
 
     json[] messages = [{role: "user", content: userPrompt}];
@@ -70,7 +66,7 @@ function runAgentLoop(
         };
 
         http:Response|error resp = anthropicClient->post("/v1/messages", requestBody, {
-            "x-api-key": effectiveApiKey,
+            "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json"
         });

@@ -15,7 +15,7 @@ demo-up: ## Start the full stack (real Splunk/Datadog exporters — needs .env c
 
 demo-mock-up: ## Start stack with mock MCPs (no creds needed — good for local dev)
 	@echo "==> Building Ballerina images sequentially (avoids JVM OOM with parallel builds)..."
-	@for svc in store customer order inventory invoice payment notification load-gen mcp-server splunk-mock-mcp datadog-mock-mcp devops-agent; do \
+	@for svc in store customer order inventory invoice payment notification load-gen mcp-server splunk-mock-mcp datadog-mock-mcp devops-oversight-agent; do \
 		echo "  -- building $$svc"; \
 		docker compose -f $(COMPOSE_FILE) --profile mock build $$svc || exit 1; \
 	done

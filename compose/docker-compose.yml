@@ -295,7 +295,8 @@ services:
   # ── DevOps agent (Phase 4) ────────────────────────────────────────────────
   devops-oversight-agent:
     build:
-      context: ../generate/agent
+      context: ../
+      dockerfile: generate/agent/Dockerfile
       <<: *ballerina-build
     image: devops-poc/devops-oversight-agent:latest
     environment:
@@ -306,7 +307,7 @@ services:
       DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
       BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-server:8290}
     ports:
-      - "8082:8080"  # 8080 is taken by k3d-amp-local-serverlb (WSO2 Agent Manager)
+      - "8082:8000"  # listener on 8000; 8080 is taken by k3d-amp-local-serverlb
     networks: [devops-poc]
     restart: unless-stopped
     depends_on:
