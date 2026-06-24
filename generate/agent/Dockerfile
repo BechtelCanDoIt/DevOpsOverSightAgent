@@ -1,6 +1,6 @@
 FROM ballerina/ballerina:2201.13.3 AS build
 WORKDIR /home/ballerina/app
-COPY --chown=ballerina:ballerina . .
+COPY . .
 RUN bal build
 
 FROM ballerina/ballerina:2201.13.3

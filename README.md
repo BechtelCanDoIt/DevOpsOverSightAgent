@@ -287,7 +287,7 @@ Agent Manager runs via a self-contained Docker quick-start container. It creates
 docker run --rm --name amp-quick-start \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --network=host \
-  ghcr.io/wso2/amp-quick-start:v0.15.0 \
+  ghcr.io/wso2/amp-quick-start:v0.16.0 \
   ./install.sh
 
 # Console: http://localhost:3000  (amp-admin / amp-admin)
@@ -296,22 +296,45 @@ docker run --rm --name amp-quick-start \
 # Uninstall + delete cluster: ./uninstall.sh --delete-cluster
 ```
 
-Once the control plane is up:
+Once the control plane is up, create a **Platform-Hosted** agent in `http://localhost:3000`:
 
-1. **Build the agent image:** `docker compose -f compose/docker-compose.yml build devops-oversight-agent`
-2. **Create a Project** in amp-console (`http://localhost:3000`)
-3. **Define an Internal Agent** pointing at `devops-poc/devops-oversight-agent:latest` with `imagePullPolicy: IfNotPresent`
-4. **Configure secrets** in amp-console — the pod picks these up as env vars:
+**Agent config:**
 
-| Secret | Value (for mock mode) |
-|--------|----------------------|
+| Field | Value |
+|-------|-------|
+| Display Name | `DevOps OverSight Agent` |
+| Description | AI agent that correlates Splunk logs and Datadog metrics to diagnose and remediate incidents in the retail mesh |
+| Build Context | `generate/agent` |
+| Dockerfile Path | `generate/agent/Dockerfile` |
+| Exposed Port | `8080` |
+| Health Check Path | `/health` |
+
+**Environment variables / secrets:**
+
+| Variable | Value (mock mode) |
+|----------|------------------|
 | `ANTHROPIC_API_KEY` | your key |
 | `SPLUNK_MCP_URL` | `http://host.docker.internal:8400` |
 | `DATADOG_MCP_URL` | `http://host.docker.internal:8401` |
 | `BALLERINA_TOPOLOGY_MCP_URL` | `http://host.docker.internal:8290` |
+| `OTEL_SERVICE_NAME` | `devops-oversight-agent` |
 
-5. **Deploy** — verify `GET http://localhost:8082/health` → `{"status":"UP"}`
-6. **Trigger an investigation:** `curl -X POST http://localhost:8082/investigate -H "Content-Type: application/json" -d '{"service":"payment-service","severity":"P1","description":"502 spike"}'`
+**Verify and trigger:**
+
+```bash
+# Health check (AMP proxies :8082 → pod :8080 by default)
+curl http://localhost:8082/health
+
+# Trigger a structured investigation
+curl -X POST http://localhost:8082/investigate \
+  -H "Content-Type: application/json" \
+  -d '{"service":"payment-service","severity":"P1","description":"502 spike"}'
+
+# AMP chat endpoint (Platform-Hosted agents)
+curl -X POST http://localhost:8082/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Why is payment-service failing?","sessionId":"demo-1"}'
+```
 
 ---
 
