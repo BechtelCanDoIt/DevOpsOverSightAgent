@@ -1,6 +1,7 @@
 FROM ballerina/ballerina:2201.13.3 AS build
+USER root
 WORKDIR /home/ballerina/app
-COPY . .
+COPY generate/agent/ .
 RUN bal build
 
 FROM ballerina/ballerina:2201.13.3
