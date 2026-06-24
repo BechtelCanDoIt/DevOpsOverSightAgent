@@ -26,8 +26,8 @@ type ChatRequest record {
     string conversationId = "";
 };
 
-// ── Listener on :8080 ────────────────────────────────────────────────────────
-listener http:Listener agentListener = new (8080);
+// ── Listener on :8000 (AMP Platform-Hosted default) ─────────────────────────
+listener http:Listener agentListener = new (8000);
 
 service /health on agentListener {
     resource function get .() returns json => {status: "UP", 'service: "devops-oversight-agent"};

@@ -39,7 +39,9 @@ function runAgentLoop(
     function (string toolName, json args) returns string toolDispatcher,
     int maxTurns
 ) returns string|error {
-    http:Client anthropicClient = check new ("https://api.anthropic.com", timeout = 120);
+    // AMP injects ANTHROPIC_URL pointing to its AI gateway proxy; fall back to direct.
+    string anthropicBaseUrl = envOr("ANTHROPIC_URL", "https://api.anthropic.com");
+    http:Client anthropicClient = check new (anthropicBaseUrl, timeout = 120);
 
     json[] messages = [{role: "user", content: userPrompt}];
     string finalText = "Investigation incomplete — max turns reached.";
