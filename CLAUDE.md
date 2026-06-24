@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) correlates signals across **Splunk** and **Datadog** over **MCP** to diagnose and remediate incidents in a Ballerina microservice mesh. `DevOpsAgent/` is the repository root for the GitHub push.
+This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) correlates signals across **Splunk** and **Datadog** over **MCP** to diagnose and remediate incidents in a Ballerina microservice mesh. `DevOpsOverSightAgent/` is the repository root for the GitHub push.
 
 **Read these first — they are the canonical docs. Do not duplicate their content here; update them and link.**
 
@@ -14,7 +14,7 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 
 ## Source layout
 
-- `generate/` — all Ballerina source, one package per directory; includes 7 mesh services, `load-gen`, `mcp-server` (topology MCP), `agent` (DevOps agent), `splunk-mock-mcp`, and `datadog-mock-mcp`.
+- `generate/` — all Ballerina source, one package per directory; includes 7 mesh services, `load-gen`, `mcp-server` (topology MCP), `agent` (DevOps OverSight agent), `splunk-mock-mcp`, and `datadog-mock-mcp`.
 - `compose/` — Docker Compose stack (Phase 1) · `catalog/` — MCP service catalog (Phase 3) · `demo/` — demo scripts (Phase 5) · `todo/` — phase specs.
 
 ## Locked Decisions (Phase 0 + override)
@@ -54,7 +54,7 @@ curl -X POST http://localhost:9196/chaos/enable \
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.saas.yml --profile saas up -d
 
 # Phase 4 — Kind cluster + Agent Manager (optional / future)
-kind create cluster --name devops-agent
+kind create cluster --name devops-oversight-agent
 helm install wso2-agent-manager wso2/agent-manager -n agent-manager --create-namespace
 amctl status
 

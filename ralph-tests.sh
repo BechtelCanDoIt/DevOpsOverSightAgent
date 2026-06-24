@@ -111,7 +111,7 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   # failed service log at the end of its output, so $RUN_LOG is sufficient.
   PROMPT_FILE="$LOG_DIR/prompt-$i.md"
   cat > "$PROMPT_FILE" <<'PROMPT_HEADER'
-You are inside the DevOpsAgent repo (see CLAUDE.md for project context). The
+You are inside the DevOpsOverSightAgent repo (see CLAUDE.md for project context). The
 test runner `./runTests.sh` was just invoked and one or more Ballerina unit
 test suites failed. The full output is below.
 

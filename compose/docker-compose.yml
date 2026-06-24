@@ -293,14 +293,14 @@ services:
     restart: unless-stopped
 
   # ── DevOps agent (Phase 4) ────────────────────────────────────────────────
-  devops-agent:
+  devops-oversight-agent:
     build:
       context: ../generate/agent
       <<: *ballerina-build
-    image: devops-poc/devops-agent:latest
+    image: devops-poc/devops-oversight-agent:latest
     environment:
       <<: *otel-env
-      OTEL_SERVICE_NAME: devops-agent
+      OTEL_SERVICE_NAME: devops-oversight-agent
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
       DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}

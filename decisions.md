@@ -64,7 +64,7 @@ All architecture and tooling choices that Phases 1–5 depend on. Treat these as
 
 ## D6 — Repo layout
 
-**Decision:** `DevOpsAgent/` is the GitHub push root. Ballerina source under `generate/` (one package per service, including the agent), phase specs under `todo/`, compose stack under `compose/`.
+**Decision:** `DevOpsOverSightAgent/` is the GitHub push root. Ballerina source under `generate/` (one package per service, including the agent), phase specs under `todo/`, compose stack under `compose/`.
 
 ---
 

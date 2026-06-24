@@ -57,7 +57,7 @@ Resolve the open questions from the planning README and write them into `decisio
 - [X] OTel Collector as single shipper **or** dual native agents → **single OTel Collector** (see `decisions.md` D3)
 - [X] MCP server hostname/port convention → **`ballerina-mcp:9090` internal, `:9098` host-mapped, `http://host.docker.internal:9098` from K8s** (see `decisions.md` D4)
 - [X] **Mesh shape:** hybrid — keep all four spec services (`order`, `payment`, `inventory`, `notification`) **and** add three business domains (`customer`, `invoice`, `store`) = 7 services + `load-gen`. Traffic generator drives the five front-facing domains (`customer`, `order`, `invoice`, `inventory`, `store`)
-- [X] **Repo/source layout:** `DevOpsAgent/` is the GitHub push root; Ballerina source under `generate/` (one package per service, including the agent), specs under `todo/`
+- [X] **Repo/source layout:** `DevOpsOverSightAgent/` is the GitHub push root; Ballerina source under `generate/` (one package per service, including the agent), specs under `todo/`
 - [X] **Agent framework & LLM:** Ballerina agent calling **Anthropic Claude** directly via HTTP — entire stack is Ballerina (overrides Phase 0 Python + Claude Agent SDK selection; see `decisions.md` D7)
 - [X] **Official MCP servers confirmed:** Datadog MCP (Bits AI, remote-hosted `mcp.datadoghq.com`, OAuth or API+App key) and Splunk MCP (Splunkbase app 7931 on Splunk Cloud, MCP bearer token) — the agent connects to both; no custom REST wrappers needed
 

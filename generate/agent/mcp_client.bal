@@ -19,7 +19,7 @@ function mcpInitialize(http:Client mcpClient) returns error? {
     json initReq = {jsonrpc: "2.0", method: "initialize", params: {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: {name: "ballerina-devops-agent", 'version: "1.0.0"}
+        clientInfo: {name: "ballerina-devops-oversight-agent", 'version: "1.0.0"}
     }, id: 1};
     http:Response resp = check mcpClient->post("/mcp", initReq, {"Content-Type": "application/json"});
     if resp.statusCode != 200 {

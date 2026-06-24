@@ -367,7 +367,7 @@ modules = [
 
 [[package]]
 org = "devopspoc"
-name = "devops_agent"
+name = "devops_oversight_agent"
 version = "0.1.0"
 dependencies = [
 	{org = "ballerina", name = "http"},
@@ -380,6 +380,6 @@ dependencies = [
 	{org = "ballerinax", name = "prometheus"}
 ]
 modules = [
-	{org = "devopspoc", packageName = "devops_agent", moduleName = "devops_agent"}
+	{org = "devopspoc", packageName = "devops_oversight_agent", moduleName = "devops_oversight_agent"}
 ]
 

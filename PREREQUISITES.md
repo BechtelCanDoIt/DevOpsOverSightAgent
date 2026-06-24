@@ -47,7 +47,7 @@ brew install python@3.12   # 3.14 also works
 
 ## WSO2 Agent Manager (Phase 0.3 smoke test)
 
-Agent Manager is bootstrapped via a self-contained Docker quick-start container (v0.16.0). It creates its own k3d cluster internally — this is separate from the `devops-agent` kind cluster used for Phase 4.
+Agent Manager is bootstrapped via a self-contained Docker quick-start container (v0.16.0). It creates its own k3d cluster internally — this is separate from the `devops-oversight-agent` kind cluster used for Phase 4.
 
 **macOS note:** Uses Colima internally (the container manages its own Colima profile named `agent-manager`). Rancher Desktop can be the host Docker runtime.
 

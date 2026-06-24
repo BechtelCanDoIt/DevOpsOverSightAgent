@@ -19,11 +19,30 @@ type AlertRequest record {|
     string id = "AGENT-001";
 |};
 
+// ── Chat request shape (WSO2 AMP Platform-Hosted agent protocol) ──────────────
+type ChatRequest record {
+    string message;
+    string sessionId = "";
+    string conversationId = "";
+};
+
 // ── Listener on :8080 ────────────────────────────────────────────────────────
 listener http:Listener agentListener = new (8080);
 
 service /health on agentListener {
-    resource function get .() returns json => {status: "UP", 'service: "devops-agent"};
+    resource function get .() returns json => {status: "UP", 'service: "devops-oversight-agent"};
+}
+
+service /chat on agentListener {
+    resource function post .(http:Request req) returns http:Response|error {
+        json payload = check req.getJsonPayload();
+        ChatRequest chatReq = check payload.cloneWithType(ChatRequest);
+        log:printInfo("chat request received", sessionId = chatReq.sessionId);
+        string response = check chat(chatReq.message);
+        http:Response resp = new;
+        resp.setJsonPayload({message: response});
+        return resp;
+    }
 }
 
 service /investigate on agentListener {
@@ -52,6 +71,73 @@ service /webhook on agentListener {
         resp.setJsonPayload({status: "investigated", summary: summary});
         return resp;
     }
+}
+
+// ── Core chat function ────────────────────────────────────────────────────────
+
+function chat(string userMessage) returns string|error {
+    string apiKey = envOr("ANTHROPIC_API_KEY", "");
+    if apiKey == "" {
+        return error("ANTHROPIC_API_KEY not set");
+    }
+    string model = envOr("AGENT_MODEL", "claude-sonnet-4-6");
+
+    string resolvedSplunkUrl = envOrCfg("SPLUNK_MCP_URL", splunkMcpUrl);
+    string resolvedDatadogUrl = envOrCfg("DATADOG_MCP_URL", datadogMcpUrl);
+    string resolvedTopologyUrl = envOrCfg("BALLERINA_TOPOLOGY_MCP_URL", ballerinaTopologyMcpUrl);
+
+    http:Client splunkMcp = check new (resolvedSplunkUrl, timeout = 30);
+    http:Client datadogMcp = check new (resolvedDatadogUrl, timeout = 30);
+    http:Client topologyMcp = check new (resolvedTopologyUrl, timeout = 30);
+
+    error? splunkInit = mcpInitialize(splunkMcp);
+    error? ddInit = mcpInitialize(datadogMcp);
+    error? topInit = mcpInitialize(topologyMcp);
+
+    if splunkInit is error { log:printWarn("Splunk MCP init failed", 'error = splunkInit); }
+    if ddInit is error { log:printWarn("Datadog MCP init failed", 'error = ddInit); }
+    if topInit is error { log:printWarn("Topology MCP init failed", 'error = topInit); }
+
+    AnthropicTool[] allTools = [];
+    if splunkInit !is error {
+        McpToolDef[]|error splunkTools = mcpListTools(splunkMcp);
+        if splunkTools is McpToolDef[] {
+            foreach McpToolDef t in splunkTools {
+                allTools.push({name: string `splunk__${t.name}`, description: string `[splunk] ${t.description}`, input_schema: t.inputSchema});
+            }
+        }
+    }
+    if ddInit !is error {
+        McpToolDef[]|error ddTools = mcpListTools(datadogMcp);
+        if ddTools is McpToolDef[] {
+            foreach McpToolDef t in ddTools {
+                allTools.push({name: string `datadog__${t.name}`, description: string `[datadog] ${t.description}`, input_schema: t.inputSchema});
+            }
+        }
+    }
+    if topInit !is error {
+        McpToolDef[]|error topTools = mcpListTools(topologyMcp);
+        if topTools is McpToolDef[] {
+            foreach McpToolDef t in topTools {
+                allTools.push({name: string `topology__${t.name}`, description: string `[topology] ${t.description}`, input_schema: t.inputSchema});
+            }
+        }
+    }
+
+    function (string, json) returns string dispatcher = function(string toolName, json args) returns string {
+        string[]|error parts = splitOnFirst(toolName, "__");
+        if parts is error || parts.length() < 2 {
+            return string `Error: bad tool name ${toolName}`;
+        }
+        string prefix = parts[0];
+        string realName = parts[1];
+        http:Client targetClient = prefix == "splunk" ? splunkMcp : (prefix == "datadog" ? datadogMcp : topologyMcp);
+        McpToolResult|error result = mcpCallTool(targetClient, realName, args, 99);
+        if result is error { return string `Tool error: ${result.message()}`; }
+        return result.text;
+    };
+
+    return check runAgentLoop(apiKey, model, SYSTEM_PROMPT, userMessage, allTools, dispatcher, 20);
 }
 
 // ── Core investigation function ───────────────────────────────────────────────

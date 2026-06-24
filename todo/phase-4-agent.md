@@ -19,11 +19,11 @@ The real Splunk and Datadog MCP URLs are injected at runtime via env vars; the m
 ## Tasks
 
 ### 4.1 Agent scaffold
-- [x] `generate/agent/` Ballerina package (`devopspoc/devops_agent`)
+- [x] `generate/agent/` Ballerina package (`devopspoc/devops_oversight_agent`)
 - [x] `anthropic_client.bal` — Anthropic Messages API client; implements `runAgentLoop(apiKey, model, systemPrompt, userPrompt, tools, dispatcher, maxTurns)` with full tool-use loop (handles `tool_use` stop_reason, accumulates `tool_result` blocks, loops until `end_turn` or max turns)
 - [x] `mcp_client.bal` — minimal MCP HTTP client; `mcpInitialize`, `mcpListTools`, `mcpCallTool` over JSON-RPC 2.0 POST to `/mcp`
 - [x] `prompts.bal` — `SYSTEM_PROMPT` (investigation protocol, all three MCPs, propose-before-act guardrail) and `buildInvestigationPrompt`
-- [x] `devops_agent.bal` — HTTP listener on `:8080`; `POST /investigate` (structured alert body) + `POST /webhook/alert` (Datadog webhook format); both call `investigate()` and return a JSON summary
+- [x] `devops_oversight_agent.bal` — HTTP listener on `:8080`; `POST /investigate` (structured alert body) + `POST /webhook/alert` (Datadog webhook format); both call `investigate()` and return a JSON summary
 - [x] `obs.bal` / `tracing.bal` — OTel instrumentation (same pattern as mesh services)
 - [x] `Config.toml` + `Ballerina.toml` — `observabilityIncluded = true`, configurable MCP URLs defaulting to compose service names
 
@@ -67,7 +67,7 @@ MCP server URLs come from env vars with compose-internal defaults:
 - [ ] Datadog monitor configured in the SaaS console to fire the webhook when `payment-service` error rate exceeds threshold — blocked on `DD_API_KEY`
 
 ### 4.6 Docker Compose wiring
-- [x] `devops-agent` service in `compose/docker-compose.yml` — builds from `../generate/agent`, port `8080:8080`, health-checked on `/health`
+- [x] `devops-oversight-agent` service in `compose/docker-compose.yml` — builds from `../generate/agent`, port `8080:8080`, health-checked on `/health`
 - [x] `splunk-mock-mcp` service — port `8400:8400`
 - [x] `datadog-mock-mcp` service — port `8401:8401`
 - [x] All three MCP URL env vars wired; switching to live vendors is a `.env` change only
@@ -83,7 +83,7 @@ MCP server URLs come from env vars with compose-internal defaults:
 Agent Manager's Python auto-instrumentation init container (`amp-python-instrumentation-provider`) does not apply to Ballerina. Ballerina's `observabilityIncluded = true` flag provides equivalent OTel traces natively. Agent Manager can still host the Ballerina agent container if desired.
 
 - [ ] Create a Project in `amp-console`
-- [ ] Create an Internal Agent definition pointing at `devops-poc/devops-agent:latest`
+- [ ] Create an Internal Agent definition pointing at `devops-poc/devops-oversight-agent:latest`
 - [ ] Configure secrets: `ANTHROPIC_API_KEY`, MCP URLs, `DD_SITE`, `SPLUNK_HEC_TOKEN`
 - [ ] Deploy and verify pod starts; confirm `/health` returns 200
 - [ ] Trigger an investigation; confirm traces appear in `amp-trace-observer`

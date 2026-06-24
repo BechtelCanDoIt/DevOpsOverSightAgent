@@ -23,7 +23,7 @@ A local-first demo: a Ballerina retail microservice mesh emits traces, logs, and
 ```
   make demo-mock-up
   Then verify all four new services are up:
-  curl http://localhost:8082/health   # devops-agent
+  curl http://localhost:8082/health   # devops-oversight-agent
   curl http://localhost:8290/health   # mcp-server
   curl http://localhost:8400/health   # splunk-mock-mcp
   curl http://localhost:8401/health   # datadog-mock-mcp
@@ -298,9 +298,9 @@ docker run --rm --name amp-quick-start \
 
 Once the control plane is up:
 
-1. **Build the agent image:** `docker compose -f compose/docker-compose.yml build devops-agent`
+1. **Build the agent image:** `docker compose -f compose/docker-compose.yml build devops-oversight-agent`
 2. **Create a Project** in amp-console (`http://localhost:3000`)
-3. **Define an Internal Agent** pointing at `devops-poc/devops-agent:latest` with `imagePullPolicy: IfNotPresent`
+3. **Define an Internal Agent** pointing at `devops-poc/devops-oversight-agent:latest` with `imagePullPolicy: IfNotPresent`
 4. **Configure secrets** in amp-console — the pod picks these up as env vars:
 
 | Secret | Value (for mock mode) |

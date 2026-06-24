@@ -404,11 +404,11 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 
 ## 11. Repository layout
 
-`DevOpsAgent/` is the GitHub push root. Directories are created as their phase reaches it; the table
+`DevOpsOverSightAgent/` is the GitHub push root. Directories are created as their phase reaches it; the table
 below shows the intended final layout and the phase that builds each.
 
 ```
-DevOpsAgent/
+DevOpsOverSightAgent/
 ├── CLAUDE.md            project instructions for Claude Code
 ├── README.md            component catalog + getting-started
 ├── architecture.md      this document
