@@ -3,7 +3,7 @@ USER root
 ENV HOME=/home/ballerina
 WORKDIR /home/ballerina/app
 COPY generate/agent/ .
-RUN bal build
+RUN JAVA_OPTS="-Duser.home=/home/ballerina" bal build
 
 FROM ballerina/ballerina:2201.13.3
 WORKDIR /home/ballerina
