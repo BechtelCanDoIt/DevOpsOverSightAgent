@@ -302,6 +302,7 @@ Once the control plane is up, create a **Platform-Hosted** agent in `http://loca
 
 | Field | Value |
 |-------|-------|
+| Git Project | `https://github.com/BechtelCanDoIt/DevOpsOverSightAgent/tree/main` |
 | Display Name | `DevOps OverSight Agent` |
 | Description | AI agent that correlates Splunk logs and Datadog metrics to diagnose and remediate incidents in the retail mesh |
 | Build Context | `generate/agent` |
@@ -309,10 +310,11 @@ Once the control plane is up, create a **Platform-Hosted** agent in `http://loca
 | Exposed Port | `8080` |
 | Health Check Path | `/health` |
 
-**Environment variables / secrets:**
+**Environment variables / secrets: (For Local Mocks)**
 
 | Variable | Value (mock mode) |
 |----------|------------------|
+| `ANTHROPIC_URL` | value provided by AMP |
 | `ANTHROPIC_API_KEY` | your key |
 | `SPLUNK_MCP_URL` | `http://host.docker.internal:8400` |
 | `DATADOG_MCP_URL` | `http://host.docker.internal:8401` |
