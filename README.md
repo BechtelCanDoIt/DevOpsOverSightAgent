@@ -45,7 +45,7 @@ make rehearse
 
 ```
   make test-bal
-  This runs bal test across all 12 packages including the 4 new ones. You'll see pass/fail per package. Expected: 129 total passing (80 original + 49 new).
+  This runs bal test across all 12 packages. You'll see pass/fail per package. Expected: 129 total passing.
 
   Individual packages:
   cd generate/mcp-server && bal test        # 22 tests
