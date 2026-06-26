@@ -238,6 +238,12 @@ The service catalog is a static YAML committed to the repo (`catalog/services.ya
 seven mesh services with `dependencies` matching the §3 topology; production would discover from a
 real CMDB.
 
+### Tool-loading approach and scaling note
+
+The agent currently calls `mcpListTools()` on all three servers at the start of each `investigate()` / `chat()` call and passes all 21 tools to the LLM on every turn. At 21 tools this is fine — tool manifests are small and the LLM handles the full set without confusion.
+
+**Before swapping the mock MCPs for the real Splunk and Datadog MCPs**, this approach must change. The official Splunk MCP (Splunkbase 7931) and the Datadog MCP (`mcp.datadoghq.com`) each expose 50+ tools. Injecting 100+ manifests on every turn will saturate the context window and degrade routing accuracy. The fix is **lazy tool loading (Pattern 2 from the MCP scaling guide)**: expose a single `discover_tools(query)` tool in the initial context; the agent calls it to fetch only the manifests it needs for the next step, and those manifests are added for that turn only. The tool registry should be backed by pgvector + `nomic-embed-text` (already in the stack) for semantic matching. This work is tracked in the Phase 4 exit criteria.
+
 ### Optional API Manager MCP Gateway
 
 The three MCP servers may be fronted by the **WSO2 API Manager MCP Gateway**, which gives **auth,
@@ -393,6 +399,7 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 | **Runbook idempotency** | Double-invoking `restart-service` mid-run | Per-runbook lock |
 | **Token leakage in agent traces** | Bearer tokens captured in request bodies | Use Agent Manager's redaction config |
 | **Clock skew / ingest lag** | Containers vs SaaS timing drift during smoke tests | Watch ingest delays; narrate over lag in the live demo |
+| **Context saturation when real vendor MCPs arrive** | Official Splunk + Datadog MCPs expose 50+ tools each; loading all 100+ on every turn saturates context and degrades routing | Implement lazy tool loading (§5) before swapping mocks — expose a `discover_tools(query)` gateway, retire full upfront injection |
 
 ---
 

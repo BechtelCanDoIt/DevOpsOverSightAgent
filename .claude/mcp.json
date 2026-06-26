@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "devops-topology": {
+      "type": "http",
+      "url": "http://localhost:8290/mcp"
+    },
+    "devops-splunk": {
+      "type": "http",
+      "url": "http://localhost:8400/mcp"
+    },
+    "devops-datadog": {
+      "type": "http",
+      "url": "http://localhost:8401/mcp"
+    }
+  }
+}
