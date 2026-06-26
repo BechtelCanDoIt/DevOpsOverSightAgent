@@ -265,7 +265,7 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8290/health"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8290/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -302,12 +302,17 @@ services:
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: devops-oversight-agent
+      # LLM backend — switch with LLM_PROVIDER (ollama|anthropic). Compose defaults to local Ollama.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-claude-sonnet-4-6}
       SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
       DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
       BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-server:8290}
     ports:
-      - "8082:8000"  # listener on 8000; 8080 is taken by k3d-amp-local-serverlb
+      - "8092:8000"  # listener on 8000. host 8082/8080 are taken by Colima's AMP-VM port-forward, so use 8092
     networks: [devops-poc]
     restart: unless-stopped
     depends_on:
@@ -315,7 +320,7 @@ services:
       - splunk-mock-mcp
       - datadog-mock-mcp
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

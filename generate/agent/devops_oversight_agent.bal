@@ -27,7 +27,9 @@ type ChatRequest record {
 };
 
 // ── Listener on :8000 (AMP Platform-Hosted default) ─────────────────────────
-listener http:Listener agentListener = new (8000);
+// Long idle timeout: local-Ollama investigations run many sequential tool-call turns
+// and can take minutes; the default would abort the response mid-investigation.
+listener http:Listener agentListener = new (8000, {timeout: 600});
 
 service /health on agentListener {
     resource function get .() returns json => {status: "UP", 'service: "devops-oversight-agent"};
@@ -76,12 +78,6 @@ service /webhook on agentListener {
 // ── Core chat function ────────────────────────────────────────────────────────
 
 function chat(string userMessage) returns string|error {
-    string apiKey = envOr("ANTHROPIC_API_KEY", "");
-    if apiKey == "" {
-        return error("ANTHROPIC_API_KEY not set");
-    }
-    string model = envOr("AGENT_MODEL", "claude-sonnet-4-6");
-
     string resolvedSplunkUrl = envOrCfg("SPLUNK_MCP_URL", splunkMcpUrl);
     string resolvedDatadogUrl = envOrCfg("DATADOG_MCP_URL", datadogMcpUrl);
     string resolvedTopologyUrl = envOrCfg("BALLERINA_TOPOLOGY_MCP_URL", ballerinaTopologyMcpUrl);
@@ -125,30 +121,32 @@ function chat(string userMessage) returns string|error {
     }
 
     function (string, json) returns string dispatcher = function(string toolName, json args) returns string {
-        string[]|error parts = splitOnFirst(toolName, "__");
-        if parts is error || parts.length() < 2 {
-            return string `Error: bad tool name ${toolName}`;
+        // Route by the REAL tool name (strip any "<prefix>__"). Robust to smaller models
+        // emitting the wrong namespace prefix, e.g. topology__search_datadog_monitors.
+        string realName = toolName;
+        int? sep = toolName.indexOf("__");
+        if sep is int {
+            realName = toolName.substring(sep + 2);
         }
-        string prefix = parts[0];
-        string realName = parts[1];
-        http:Client targetClient = prefix == "splunk" ? splunkMcp : (prefix == "datadog" ? datadogMcp : topologyMcp);
+        http:Client targetClient;
+        if realName.startsWith("splunk_") {
+            targetClient = splunkMcp;
+        } else if realName.includes("datadog") || realName.startsWith("apm_") {
+            targetClient = datadogMcp;
+        } else {
+            targetClient = topologyMcp;
+        }
         McpToolResult|error result = mcpCallTool(targetClient, realName, args, 99);
         if result is error { return string `Tool error: ${result.message()}`; }
         return result.text;
     };
 
-    return check runAgentLoop(apiKey, model, SYSTEM_PROMPT, userMessage, allTools, dispatcher, 20);
+    return check runConfiguredLlm(SYSTEM_PROMPT, userMessage, allTools, dispatcher, 12);
 }
 
 // ── Core investigation function ───────────────────────────────────────────────
 
 function investigate(AlertRequest alert) returns string|error {
-    string apiKey = envOr("ANTHROPIC_API_KEY", "");
-    if apiKey == "" {
-        return error("ANTHROPIC_API_KEY not set");
-    }
-    string model = envOr("AGENT_MODEL", "claude-sonnet-4-6");
-
     log:printInfo("starting investigation", 'service = alert.'service, severity = alert.severity);
 
     // Connect to MCP servers (use env-override URLs).
@@ -198,20 +196,28 @@ function investigate(AlertRequest alert) returns string|error {
 
     // Build a dispatcher closure that routes tool calls to the right MCP client.
     function (string, json) returns string dispatcher = function(string toolName, json args) returns string {
-        string[]|error parts = splitOnFirst(toolName, "__");
-        if parts is error || parts.length() < 2 {
-            return string `Error: bad tool name ${toolName}`;
+        // Route by the REAL tool name (strip any "<prefix>__"). Robust to smaller models
+        // emitting the wrong namespace prefix, e.g. topology__search_datadog_monitors.
+        string realName = toolName;
+        int? sep = toolName.indexOf("__");
+        if sep is int {
+            realName = toolName.substring(sep + 2);
         }
-        string prefix = parts[0];
-        string realName = parts[1];
-        http:Client targetClient = prefix == "splunk" ? splunkMcp : (prefix == "datadog" ? datadogMcp : topologyMcp);
+        http:Client targetClient;
+        if realName.startsWith("splunk_") {
+            targetClient = splunkMcp;
+        } else if realName.includes("datadog") || realName.startsWith("apm_") {
+            targetClient = datadogMcp;
+        } else {
+            targetClient = topologyMcp;
+        }
         McpToolResult|error result = mcpCallTool(targetClient, realName, args, 99);
         if result is error { return string `Tool error: ${result.message()}`; }
         return result.text;
     };
 
     string userPrompt = buildInvestigationPrompt(alert.'service, alert.severity, alert.description, alert.id);
-    string summary = check runAgentLoop(apiKey, model, SYSTEM_PROMPT, userPrompt, allTools, dispatcher, 20);
+    string summary = check runConfiguredLlm(SYSTEM_PROMPT, userPrompt, allTools, dispatcher, 12);
     log:printInfo("investigation complete", 'service = alert.'service);
     return summary;
 }

@@ -19,7 +19,7 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 
 ## Locked Decisions (Phase 0 + override)
 
-- **LLM:** Anthropic Claude — called directly via HTTP from Ballerina
+- **LLM:** **Configurable via `LLM_PROVIDER` env var**: `anthropic` (Anthropic Claude, direct HTTP; requires `sk-ant-api03-…` key) or `ollama` (local model, creds-free; default `qwen3.5:9b` at `host.docker.internal:11434`). Both paths in code (`anthropic_client.bal` + `ollama_client.bal`).
 - **Agent framework:** **Ballerina** (overrides Phase 0 Python decision — entire stack is Ballerina; Ballerina OTel covers Agent Manager observability needs)
 - **Kubernetes:** kind cluster
 - **Splunk:** Cloud trial (not Enterprise container); telemetry ships via the OTel Collector's `splunk_hec` exporter
@@ -42,7 +42,7 @@ cd generate/<service-name> && bal test
 ./runTests.sh
 
 # Phase 4 — Trigger an investigation (agent running in compose)
-curl -X POST http://localhost:8082/investigate \
+curl -X POST http://localhost:8092/investigate \
   -H "Content-Type: application/json" \
   -d '{"service":"payment-service","severity":"P1","description":"502 spike"}'
 

@@ -1,6 +1,6 @@
 # Phase 4 — Ballerina Agent
 
-**Goal:** build a Ballerina agent that calls the Anthropic Messages API in a tool-use loop, wires to three MCP servers (Splunk, Datadog, Ballerina topology), and deploys into the Docker Compose stack. The agent also ships two **mock MCP servers** so the end-to-end investigation loop can be exercised locally before live Splunk/Datadog credentials arrive.
+**Goal:** build a Ballerina agent that calls an LLM (Anthropic Claude or local Ollama) in a native tool-use loop, wires to three MCP servers (Splunk, Datadog, Ballerina topology), and deploys into the Docker Compose stack. The agent also ships two **mock MCP servers** so the end-to-end investigation loop can be exercised locally before live Splunk/Datadog credentials arrive. The LLM backend is configurable via `LLM_PROVIDER` env var (default: `ollama` for creds-free demos; `anthropic` for production).
 
 ## Why Ballerina (not Python) for the agent
 
@@ -10,7 +10,7 @@ Phase 0 originally planned Python for WSO2 Agent Manager auto-instrumentation. T
 
 | Package | Port | Purpose |
 |---|---|---|
-| `generate/agent/` | 8080 | DevOps agent — Anthropic tool-use loop + HTTP trigger endpoints |
+| `generate/agent/` | 8080 | DevOps agent — configurable LLM tool-use loop (Anthropic or Ollama) + HTTP trigger endpoints |
 | `generate/splunk-mock-mcp/` | 8400 | Mock Splunk MCP — mirrors Splunkbase app 7931 interface; used until real creds arrive |
 | `generate/datadog-mock-mcp/` | 8401 | Mock Datadog MCP — mirrors `mcp.datadoghq.com` interface; used until real creds arrive |
 
@@ -21,11 +21,13 @@ The real Splunk and Datadog MCP URLs are injected at runtime via env vars; the m
 ### 4.1 Agent scaffold
 - [x] `generate/agent/` Ballerina package (`devopspoc/devops_oversight_agent`)
 - [x] `anthropic_client.bal` — Anthropic Messages API client; implements `runAgentLoop(apiKey, model, systemPrompt, userPrompt, tools, dispatcher, maxTurns)` with full tool-use loop (handles `tool_use` stop_reason, accumulates `tool_result` blocks, loops until `end_turn` or max turns)
+- [x] `ollama_client.bal` — Ollama API `/api/chat` client; implements `runOllamaLoop(baseUrl, model, systemPrompt, userPrompt, tools, dispatcher, maxTurns)` for local model tool-use (mirrors Anthropic loop, translates Anthropic tool defs to OpenAI function format)
+- [x] `configured_llm.bal` — LLM provider dispatcher; routes to `runAgentLoop` or `runOllamaLoop` based on `LLM_PROVIDER` env var (default: `ollama` for creds-free; `anthropic` requires API key)
 - [x] `mcp_client.bal` — minimal MCP HTTP client; `mcpInitialize`, `mcpListTools`, `mcpCallTool` over JSON-RPC 2.0 POST to `/mcp`
 - [x] `prompts.bal` — `SYSTEM_PROMPT` (investigation protocol, all three MCPs, propose-before-act guardrail) and `buildInvestigationPrompt`
-- [x] `devops_oversight_agent.bal` — HTTP listener on `:8080`; `POST /investigate` (structured alert body) + `POST /webhook/alert` (Datadog webhook format); both call `investigate()` and return a JSON summary
+- [x] `devops_oversight_agent.bal` — HTTP listener on `:8080` (mapped to `:8092` on host to avoid Colima AMP-VM port collisions); `POST /investigate` (structured alert body) + `POST /webhook/alert` (Datadog webhook format); both call `investigate()` and return a JSON summary
 - [x] `obs.bal` / `tracing.bal` — OTel instrumentation (same pattern as mesh services)
-- [x] `Config.toml` + `Ballerina.toml` — `observabilityIncluded = true`, configurable MCP URLs defaulting to compose service names
+- [x] `Config.toml` + `Ballerina.toml` — `observabilityIncluded = true`, configurable MCP URLs + LLM provider opts defaulting to compose service names and Ollama
 
 ### 4.2 Mock MCP servers
 
@@ -56,10 +58,11 @@ MCP server URLs come from env vars with compose-internal defaults:
 - `BALLERINA_TOPOLOGY_MCP_URL` (default `http://mcp-server:8290`)
 
 ### 4.4 System prompt + agent behavior
-- [x] System prompt defines investigation protocol (10 steps: monitors → metrics → trace → correlate → logs → blast radius → deploys → history → propose runbook → summarize)
+- [x] System prompt defines investigation protocol (10 steps: monitors → metrics → trace → correlate → logs → blast radius → deploys → history → propose runbook → summarize) — works with any LLM backend
 - [x] Propose-before-act guardrail: agent must call `topology__list_runbooks`, explain its choice, then WAIT before calling `topology__run_runbook`
-- [x] `AGENT_MODEL` env var selects the Claude model (default `claude-sonnet-4-6`)
-- [x] `max_tokens: 8192`, `maxTurns: 20` — configurable via env/Config.toml
+- [x] `AGENT_MODEL` env var selects the Claude model for Anthropic backend (default `claude-sonnet-4-6`)
+- [x] `OLLAMA_MODEL` env var selects the Ollama model for Ollama backend (default `qwen3.5:9b`)
+- [x] `max_tokens: 8192`, `maxTurns: 12` for local models (reduced from 20 for faster demos) — configurable via env/Config.toml
 
 ### 4.5 Trigger mechanism
 - [x] `POST /investigate` — structured `AlertRequest` body `{ service, severity, description, id }` — primary trigger for demo
@@ -67,10 +70,11 @@ MCP server URLs come from env vars with compose-internal defaults:
 - [ ] Datadog monitor configured in the SaaS console to fire the webhook when `payment-service` error rate exceeds threshold — blocked on `DD_API_KEY`
 
 ### 4.6 Docker Compose wiring
-- [x] `devops-oversight-agent` service in `compose/docker-compose.yml` — builds from `../generate/agent`, port `8080:8080`, health-checked on `/health`
+- [x] `devops-oversight-agent` service in `compose/docker-compose.yml` — builds from `../generate/agent`, port mapped `8092:8000` (host 8092 avoids Colima AMP-VM port collision), health-checked on `/health`
 - [x] `splunk-mock-mcp` service — port `8400:8400`
 - [x] `datadog-mock-mcp` service — port `8401:8401`
 - [x] All three MCP URL env vars wired; switching to live vendors is a `.env` change only
+- [x] LLM backend env vars: `LLM_PROVIDER`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `ANTHROPIC_API_KEY`, `AGENT_MODEL`
 
 ### 4.7 Unit tests
 - [x] 8 `@test:Config` tests in `generate/agent/tests/agent_test.bal` — all passing

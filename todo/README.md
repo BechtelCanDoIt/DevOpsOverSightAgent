@@ -10,16 +10,18 @@ A local-first demo that wires up real observability backends (Splunk + Datadog),
 | 1 | Docker Compose observability stack | [phase-1-compose.md](phase-1-compose.md) | Splunk + Datadog + OTel + supporting infra running locally |
 | 2 | Ballerina service mesh + load generator | [phase-2-ballerina.md](phase-2-ballerina.md) | Realistic mesh emitting traces/logs/metrics |
 | 3 | Ballerina MCP server | [phase-3-mcp.md](phase-3-mcp.md) | Topology + correlation + scoped runbook tools |
-| 4 | Agent in WSO2 Agent Manager | [phase-4-agent.md](phase-4-agent.md) | Python agent deployed via Agent Manager, wired to all MCPs |
+| 4 | Ballerina agent (Compose + optional AMP) | [phase-4-agent.md](phase-4-agent.md) | Ballerina agent w/ Claude tool loop, runs in Compose (guaranteed) or AMP (bonus); supports Anthropic + local Ollama LLM |
 | 5 | Demo rehearsal & verification | [phase-5-verify.md](phase-5-verify.md) | End-to-end incident triage demo |
 
 ## Architecture at a glance
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  WSO2 Agent Manager (Kubernetes, via Helm)                       │
+│  WSO2 Agent Manager (Kubernetes, via k3d)                        │
 │  ┌──────────────────────────────────────────────────────────┐    │
-│  │  Python agent  ── amp-instrumentation (OTel auto-instr) │    │
+│  │  Ballerina agent  ── ballerinax/jaeger (OTel traces)    │    │
+│  │  (Claude tool loop)                                      │    │
+│  │    │  LLM: Anthropic Claude or local Ollama             │    │
 │  │    │                                                      │    │
 │  │    ├── Splunk MCP        (logs)                          │    │
 │  │    ├── Datadog MCP       (metrics, APM traces)           │    │
@@ -53,7 +55,7 @@ A local-first demo that wires up real observability backends (Splunk + Datadog),
 - **Hybrid deployment**: services + MCP servers local in Docker Compose; telemetry ships to Splunk Cloud trial + Datadog SaaS trial. Reason: Splunk Enterprise in a container is heavy and unrealistic; Datadog has no local mode.
 - **Mesh, not single service**: correlation across services is the demo's whole point. One service can't demonstrate it.
 - **Single OTel Collector** as the unified telemetry shipper instead of separate vendor agents.
-- **Agent runtime is Python** (not Ballerina) because WSO2 Agent Manager's auto-instrumentation provider is Python-native. The agent uses the **Claude Agent SDK** (Anthropic Claude). Ballerina is used for the *workload services* and the *Ballerina MCP server*.
+- **Agent runtime is Ballerina** (full-stack Ballerina, overriding Phase 0's Python decision). The agent calls Anthropic Claude directly via HTTP using a native tool-use loop (no SDK required). Ballerina's OTel (`ballerinax/jaeger` + `ballerinax/prometheus`) covers observability. The agent is observable via its own traces in Datadog/Jaeger, completing the "agent watching the workload" story. For LLM flexibility, the agent supports both **Anthropic Claude** (direct API) and **local Ollama** (`qwen3.5:9b` or compatible) via `LLM_PROVIDER` env var — Ollama is creds-free for demos.
 - **MCP scope**: lookup + correlation + scoped runbook execution (no raw infra control).
 - **Demo headline**: incident triage — alert → agent diagnoses → optional runbook.
 

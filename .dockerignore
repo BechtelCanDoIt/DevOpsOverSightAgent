@@ -1,0 +1,9 @@
+# Ballerina build output — must NEVER be copied into Docker builds.
+# If copied, `bal build` reuses the stale incremental artifacts and ships
+# pre-change code (root cause of the agent shipping old source).
+**/target/
+
+# Local dev cruft
+**/.DS_Store
+.git
+**/*.log

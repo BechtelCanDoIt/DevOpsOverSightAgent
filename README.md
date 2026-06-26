@@ -2,6 +2,43 @@
 
 A local-first demo: a Ballerina retail microservice mesh emits traces, logs, and metrics through a single OTel Collector to **Splunk** (logs/traces) and **Datadog** (APM/metrics). A ballerina agent running under **WSO2 Agent Manager** correlates those signals over MCP to diagnose and remediate a chaos-induced incident.
 
+## Demo Steps (5 minutes)
+
+**Prerequisite:** Ollama running on your Mac with a tool-capable model. (Tested with `qwen3.5:9b`; other Qwen models work.)
+
+```bash
+# 1. Start the compose stack (Phase 1 + Phase 2 mesh)
+make demo-mock-up
+
+# Verify health (expect {"status":"UP",...} from each)
+for p in 8092 8290 8400 8401; do echo -n "$p: "; curl -s http://localhost:$p/health; echo; done
+
+# 2. Inject chaos into payment-service (0:00–0:45)
+make inject-chaos
+# Shows: latency injected + error rate injected
+
+# 3. Run the investigation (1:15–4:45)
+# The agent queries MCPs, runs the Ollama tool loop, and proposes `disable-chaos`
+make investigate
+# Expect: HTTP 200, full markdown diagnosis with findings + analysis + proposal
+# Takes ~1–3 min on qwen3.5:9b (local model runtime)
+
+# 4. Reset chaos (simulates approval + remediation) (4:45–5:00)
+make reset-chaos
+# All 7 services return "reset OK"
+
+# Demo complete. Mesh recovers within 30s. Full end-to-end: ~5 min.
+```
+
+**If Ollama is not reachable:** set `LLM_PROVIDER=anthropic` in `compose/.env` + add a real `ANTHROPIC_API_KEY=sk-ant-api03-…` key, then run the same steps. (Anthropic is faster, ~30–60s total investigation.)
+
+**Full rehearsal (all steps + startup):**
+```bash
+make rehearse
+```
+
+---
+
 ## Usage
 
 ### Unit tests — no Docker, no keys needed
@@ -23,7 +60,7 @@ A local-first demo: a Ballerina retail microservice mesh emits traces, logs, and
 ```
   make demo-mock-up
   Then verify all four new services are up:
-  curl http://localhost:8082/health   # devops-oversight-agent
+  curl http://localhost:8092/health   # devops-oversight-agent (host 8082 collides with Colima's AMP VM forward)
   curl http://localhost:8290/health   # mcp-server
   curl http://localhost:8400/health   # splunk-mock-mcp
   curl http://localhost:8401/health   # datadog-mock-mcp
@@ -69,14 +106,19 @@ The Ballerina MCP server speaks **Streamable HTTP** (plain HTTP POST at `/mcp`) 
 7. Press `Ctrl-C` in the terminal to stop the inspector proxy when you're done.
 
   ---
-### Trigger a live agent investigation (needs ANTHROPIC_API_KEY)
+### Trigger a live agent investigation
+
+The agent's LLM backend is configurable via `LLM_PROVIDER` (set in `compose/.env` or the environment):
+
+- **`ollama` (default) — local, creds-free.** Needs Ollama running on the host with a tool-capable model (e.g. `qwen3.5:9b`). Override `OLLAMA_BASE_URL` (default `http://host.docker.internal:11434`) and `OLLAMA_MODEL`. No API key, no cost.
+- **`anthropic` — Anthropic Claude.** Needs a real `ANTHROPIC_API_KEY=sk-ant-api03-…` (an `sk-ant-oat01-` OAuth token will NOT work for direct calls) and optionally `AGENT_MODEL`.
 
 ```
-  Add your key to compose/.env:
-  ANTHROPIC_API_KEY=sk-ant-...
-  Restart: make demo-mock-up, then:
+  # Ollama (default): just have Ollama up with a tool-capable model, then:
   make investigate
-  The agent will call all three MCPs, run the tool-use loop against Claude, and return a JSON summary with its diagnosis. Takes ~30–60s depending on how many tool calls the agent makes.
+  # The agent calls all three MCPs, runs the tool-use loop, and returns a JSON
+  # summary with its diagnosis + a proposed runbook (it stops for approval before acting).
+  # Local-model runs take ~1–3 min; Anthropic is faster. Agent is on host port 8092.
 ```
 
   ---
@@ -279,7 +321,7 @@ The incident-response **Ballerina agent** (`generate/agent/`) runs under WSO2 Ag
 
 ### WSO2 Agent Manager — quick-start
 
-Agent Manager runs via a self-contained Docker quick-start container. It creates its own internal k3d cluster. This is **separate** from the `devops-poc` compose stack — the agent pod reaches compose services via `host.docker.internal`.
+Agent Manager runs via a self-contained Docker quick-start container. It creates its own internal k3d cluster. This is **separate** from the `devops-poc` compose stack — the agent pod reaches compose services via `host.k3d.internal` (k3d registers this hostname in every pod to resolve back to the Docker host).
 
 ```bash
 # Install (15–20 min — downloads k3d + Agent Manager control plane)
@@ -314,11 +356,10 @@ Once the control plane is up, create a **Platform-Hosted** agent in `http://loca
 
 | Variable | Value (mock mode) |
 |----------|------------------|
-| `ANTHROPIC_URL` | value provided by AMP |
-| `ANTHROPIC_API_KEY` | your key |
-| `SPLUNK_MCP_URL` | `http://host.docker.internal:8400` |
-| `DATADOG_MCP_URL` | `http://host.docker.internal:8401` |
-| `BALLERINA_TOPOLOGY_MCP_URL` | `http://host.docker.internal:8290` |
+| `ANTHROPIC_API_KEY` | your Anthropic API key (`sk-ant-…`) |
+| `SPLUNK_MCP_URL` | `http://host.k3d.internal:8400` |
+| `DATADOG_MCP_URL` | `http://host.k3d.internal:8401` |
+| `BALLERINA_TOPOLOGY_MCP_URL` | `http://host.k3d.internal:8290` |
 | `OTEL_SERVICE_NAME` | `devops-oversight-agent` |
 
 **Verify and trigger:**

@@ -31,18 +31,20 @@ inject-chaos: ## Inject payment-service chaos (30% 502s, 2s latency, 5 min)
 reset-chaos: ## Clear chaos from all 7 services
 	bash demo/reset.sh
 
-rehearse: ## Full end-to-end demo rehearsal
+rehearse: ## Full end-to-end demo rehearsal (compose/mock path)
 	@echo "==> Starting stack..."
-	$(MAKE) demo-up
+	docker compose -f $(COMPOSE_FILE) up -d
 	@echo "==> Waiting 15s for services to become healthy..."
 	sleep 15
-	@echo "==> Injecting chaos..."
+	@echo "==> Health check (expect UP from agent, topology, splunk-mock, datadog-mock):"
+	@for p in 8092 8290 8400 8401; do echo -n "    $$p: "; curl -s http://localhost:$$p/health; echo; done
+	@echo "==> Injecting chaos into payment-service..."
 	$(MAKE) inject-chaos
-	@echo "==> Waiting 30s for alert to fire and agent to investigate..."
-	sleep 30
-	@echo "==> Resetting chaos..."
+	@echo "==> Triggering agent investigation (no auto-webhook in mock mode)..."
+	$(MAKE) investigate
+	@echo "==> Resetting chaos (simulates approved disable-chaos runbook)..."
 	$(MAKE) reset-chaos
-	@echo "==> Rehearsal complete. Review Agent Manager trace at http://localhost:3000"
+	@echo "==> Rehearsal complete. (Bonus: if AMP is up, review the agent trace at http://localhost:3000)"
 
 test-bal: ## Run bal test for all Ballerina packages
 	@for pkg in $(BAL_PACKAGES); do \
@@ -66,7 +68,7 @@ mcp-inspect: ## Launch MCP Inspector against the Ballerina MCP server (requires:
 	npx @modelcontextprotocol/inspector
 
 investigate: ## Trigger a test investigation against payment-service (requires: demo-mock-up + ANTHROPIC_API_KEY in .env)
-	curl -s -X POST http://localhost:8082/investigate \
+	curl -s -X POST http://localhost:8092/investigate \
 		-H "Content-Type: application/json" \
 		-d '{"service":"payment-service","severity":"P1","description":"502 spike detected","id":"INC-TEST-1"}' \
 		| jq .

@@ -3,13 +3,14 @@
 This POC demonstrates an AI agent that diagnoses and remediates a production-style incident by
 correlating signals across **two real observability backends**. A Ballerina retail microservice
 mesh emits traces, logs, and metrics through a **single OpenTelemetry Collector** that fans out to
-**Splunk** (logs/traces) and **Datadog** (APM/metrics). A **Ballerina agent** calls **Anthropic
-Claude** directly via HTTP and reaches all three signal sources over **MCP** (Model Context
-Protocol) — Splunk mock MCP, Datadog mock MCP (swapped for official MCPs when SaaS creds arrive),
-and a **custom Ballerina MCP** that owns the service catalog, cross-system trace correlation, and
-scoped remediation runbooks. The headline scenario: an operator injects chaos into
-`payment-service`, a Datadog monitor fires, and the agent investigates end-to-end, proposes a
-runbook, and — after human approval — remediates and writes a postmortem.
+**Splunk** (logs/traces) and **Datadog** (APM/metrics). A **Ballerina agent** calls an LLM via
+HTTP using a native tool-use loop — **Anthropic Claude** (requires `sk-ant-api03-…` key) or
+**local Ollama** (creds-free, default for the demo) — and reaches all three signal sources over
+**MCP** (Model Context Protocol) — Splunk mock MCP, Datadog mock MCP (swapped for official MCPs
+when SaaS creds arrive), and a **custom Ballerina MCP** that owns the service catalog,
+cross-system trace correlation, and scoped remediation runbooks. The headline scenario: an
+operator injects chaos into `payment-service`, a Datadog monitor fires, and the agent investigates
+end-to-end, proposes a runbook, and — after human approval — remediates and writes a postmortem.
 
 > This document is the deep-dive architecture reference. For component-by-component descriptions and
 > getting-started instructions, see the root [`README.md`](README.md). The authoritative
@@ -40,19 +41,19 @@ and the mesh's own topology service as MCP tool surfaces.
 │  KUBERNETES (kind)  —  Agent tier under WSO2 Agent Manager                             │
 │                                                                                        │
 │   ┌──────────────────────────────────────────────────────────────────────────────┐   │
-│   │  Python agent  (Claude Agent SDK, Anthropic Claude)   src: agent/                   │   │
-│   │     ▲  init container: amp-python-instrumentation-provider                     │   │
-│   │     │  injects amp-instrumentation (OTel) → traces in amp-trace-observer       │   │
-│   │     │                                                                          │   │
-│   │     └── MCP client ──┬── Splunk MCP   (official; logs)        agent/splunk/mcp/ │   │
-│   │                      ├── Datadog MCP  (official; metrics+APM) agent/datadog/mcp/│   │
-│   │                      └── Ballerina MCP (custom; topology /                     │   │
-│   │                            correlation / runbooks)  client wiring: agent/mcp/  │   │
+│   │  Ballerina agent  (LLM via HTTP tool-use loop — Anthropic or local Ollama)   │   │
+│   │     src: generate/agent/                                                      │   │
+│   │     OTel: ballerinax/jaeger (OTLP gRPC) + ballerinax/prometheus              │   │
+│   │     LLM: Anthropic Claude (requires sk-ant-api03 key) or Ollama (creds-free) │   │
+│   │     └── MCP client ──┬── Splunk MCP   (mock :8400 / official SaaS)           │   │
+│   │  (mcp_client.bal)    ├── Datadog MCP  (mock :8401 / official SaaS)           │   │
+│   │                      └── Ballerina MCP (custom; :8290)                       │   │
+│   │             all reached via host.k3d.internal:<port>                         │   │
 │   └──────────────────────────────────────────────────────────────────────────────┘   │
 │                      │ (optional) WSO2 API Manager MCP Gateway: auth, rate-limit, audit│
 └──────────────────────┼─────────────────────────────────────────────────────────────────┘
                        │
-       host bridge:  host.docker.internal  (Docker Desktop)  /  NodePort (kind)
+       host bridge:  host.k3d.internal  (k3d)  /  NodePort (kind/k3d)
                        │
 ┌──────────────────────┼─────────────────────────────────────────────────────────────────┐
 │  DOCKER COMPOSE  (bridge network: devops-poc)  —  Workload + observability tier        │
@@ -76,10 +77,7 @@ and the mesh's own topology service as MCP tool surfaces.
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**How the tiers connect.** The agent runs in K8s; the MCP servers and workload run in Compose on the
-host. The agent pod reaches the Compose endpoints via `host.docker.internal` (Docker Desktop) or a
-NodePort / host IP (kind). The Splunk MCP and Datadog MCP talk to the SaaS backends directly over the
-internet; only the **Ballerina MCP** (`:8290`) is a host-local endpoint the agent must route to.
+**How the tiers connect.** The agent runs in k3d (via the AMP quick-start container); the MCP servers and workload run in Compose on the host. The agent pod reaches Compose endpoints via `host.k3d.internal` — a hostname k3d registers in every pod that resolves to the Docker host. All three MCP ports (`8400`, `8401`, `8290`) are published to the host in `docker-compose.yml`, so they are reachable at `host.k3d.internal:<port>`. The Splunk MCP and Datadog MCP talk to the SaaS backends directly over the internet.
 
 ---
 
@@ -198,11 +196,7 @@ in Splunk share the same `trace_id`, which is what makes cross-system correlatio
 
 ## 5. MCP & agent tier
 
-The agent is **Python** (not Ballerina) because WSO2 Agent Manager's auto-instrumentation is
-Python-first: `amp-instrumentation` is a Python OTel auto-instrumentation package, and
-`amp-python-instrumentation-provider` is the K8s init container that injects it — so the agent's own
-reasoning, tool calls, latency, and token usage appear in `amp-trace-observer` with **zero code
-changes**. Ballerina stays where it shines: the workload mesh and the MCP server.
+The agent is **Ballerina** (same as the workload mesh and MCP server — the entire stack is Ballerina). It calls Anthropic Claude directly via HTTP using a native tool-use loop; no SDK required. OTel instrumentation uses the same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services. AMP routes the Anthropic API calls through its AI gateway (`ANTHROPIC_URL` env var injected by AMP; `ANTHROPIC_API_KEY` must also be set as a component env var).
 
 ### Three MCP servers
 
@@ -210,7 +204,7 @@ changes**. Ballerina stays where it shines: the workload mesh and the MCP server
 |------------|--------|----------------------------|-----------|--------|
 | **Splunk MCP** | Official — *MCP Server for Splunk platform* (Splunkbase 7931) | App on **your Splunk Cloud**; Streamable HTTP; MCP bearer token (RBAC `mcp_tool_execute`) | `splunk_run_query` (SPL), `splunk_get_indexes`, `splunk_get_knowledge_objects` | `agent/splunk/mcp/` |
 | **Datadog MCP** | Official — *Datadog MCP Server* (Bits AI) | **Remote-hosted** `mcp.datadoghq.com` (regional per `DD_SITE`; Preview, `/api/unstable/`); Streamable HTTP; OAuth or `DD_API_KEY`+`DD_APPLICATION_KEY` | `get_datadog_metric`, `search_datadog_error_tracking_issues`, `get_datadog_trace`, `search_datadog_logs`, `search_datadog_monitors` | `agent/datadog/mcp/` |
-| **Ballerina MCP** | Custom (this repo) | **Host-local** in Compose, Streamable HTTP `:8290`, reached via `host.docker.internal` | topology / correlation / runbooks (catalog below) | server `generate/mcp-server/`; client `agent/mcp/` |
+| **Ballerina MCP** | Custom (this repo) | **Host-local** in Compose, Streamable HTTP `:8290`, reached via `host.k3d.internal:8290` | topology / correlation / runbooks (catalog below) | server `generate/mcp-server/`; client `generate/agent/mcp_client.bal` |
 
 Splunk MCP knows logs; Datadog MCP knows metrics and traces. **Neither knows your service catalog,
 dependency graph, owners, or runbooks** — the custom Ballerina MCP fills that gap, and because it is
@@ -304,7 +298,7 @@ is the **human-in-the-loop "propose before act" gate**: the agent must call `lis
 present its choice before it is allowed to call `run_runbook`.
 
 ```
-Operator        payment-svc      Datadog        Agent (Python)              Ballerina MCP / Splunk      Human
+Operator        payment-svc      Datadog        Agent (Ballerina)            Ballerina MCP / Splunk      Human
    │                 │              │                 │                            │                      │
  1.│ inject chaos ──►│              │                 │                            │                      │
    │ (30% 502 + 2s)  │ degrades     │                 │                            │                      │
@@ -368,16 +362,16 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | LLM | **Anthropic Claude** | The Claude Agent SDK is Anthropic-native; supersedes the earlier Ollama pick. |
-| Local Kubernetes | **kind** | Lightweight local cluster for the Agent Manager tier. |
+| Local Kubernetes | **k3d** (via AMP quick-start) | AMP quick-start bootstraps its own k3d cluster (`amp-local`); no separate kind setup needed. |
 | Splunk deployment | **Splunk Cloud trial** | Splunk Enterprise in a container is heavy and unrealistic; trial reached via the Collector's `splunk_hec` exporter. |
 | Telemetry shipper | **Single OTel Collector** | One unified fan-out point instead of separate per-vendor agents. |
-| Agent language | **Python** | WSO2 Agent Manager auto-instrumentation is Python-first (`amp-instrumentation`), so agent traces/tokens appear with zero code changes. |
+| Agent language | **Ballerina** | Full-stack Ballerina — overrides the Phase 0 Python decision. Ballerina OTel (`ballerinax/jaeger` + `ballerinax/prometheus`) covers the observability need; the tool-use loop calls Anthropic directly via HTTP. |
 | Workload + MCP language | **Ballerina** | Showcases Ballerina's integration story for the mesh and the custom MCP server. |
 | Mesh shape | **Hybrid (7 services)** | Kept the 4 spec services (`order, payment, inventory, notification`) and added `customer, invoice, store` for a richer blast-radius graph. |
 | Deployment split | **Workload + MCP local (Compose); telemetry to SaaS** | Correlation across real backends is the point; SaaS trials avoid heavy local backends. |
 | MCP scope | **Lookup + correlation + scoped runbooks** | No raw infra control — remediation is bounded to vetted runbooks. |
 | Remediation safety | **Propose-before-act gate** | Agent must `list_runbooks` and present its choice; a human approves before `run_runbook`. |
-| Agent framework | **Claude Agent SDK (Python)** | Native MCP client + cleanest tool loop; first-class under Agent Manager's Python auto-instrumentation. |
+| Agent framework | **Ballerina (native HTTP + tool-use loop)** | Anthropic Messages API called directly; tool dispatch implemented in `generate/agent/`; no SDK dependency. |
 | MCP transport | **Streamable HTTP (`:8290`)** | stdio does not work in K8s; the agent pod needs a network endpoint. |
 | Service catalog | **Static `catalog/services.yaml`** | Simple for a POC; production would read a real CMDB. |
 | Log/metric routing | **Logs→Splunk, metrics→Datadog, traces→both** | Each backend owns its signal of record; traces dual-shipped to enable correlation. |
@@ -391,7 +385,7 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 | **Trace-ID format mismatch** (Datadog 64-bit vs OTel 128-bit) | Agent says "no logs found" because it searches Splunk with the wrong-width ID | `correlate_trace` must normalize/handle both `dd.trace_id` and `otel.trace_id`; confirm the real format during the Phase 1 smoke test |
 | **NATS async trace propagation** | `order → notification` shows as a disconnected trace | Explicitly inject W3C trace-context into the NATS envelope; build it in from day one |
 | **SSE buffering through the MCP Gateway** | Streaming `run_runbook` output breaks (no intermediate progress) | Verify the API Manager MCP Gateway does **not** buffer SSE; test early |
-| **Pod → Compose reachability** | Agent pod in K8s can't reach MCP / mesh in Compose | Reach via `host.docker.internal` (Docker Desktop) or NodePort / `extraHosts` in Helm values (kind) |
+| **Pod → Compose reachability** | Agent pod in k3d can't reach MCP / mesh in Compose via Compose service names | Use `host.k3d.internal:<port>` — set via `SPLUNK_MCP_URL`, `DATADOG_MCP_URL`, `BALLERINA_TOPOLOGY_MCP_URL` env vars in the AMP component config |
 | **Untraced Postgres queries** | DB latency invisible; can't diagnose slow-query regression | Enable the Ballerina SQL connector's tracing flag → DB calls become child spans |
 | **Shared Postgres cross-talk** | A chaos slow query in one service muddies another | Schema/DB per service via `compose/postgres/init.sql` |
 | **Ballerina OTel exporter version drift** | "unknown field" warnings in Collector logs | Pin a compatible OTel SDK version |
