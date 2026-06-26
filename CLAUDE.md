@@ -26,6 +26,7 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 - **Telemetry:** single OTel Collector fanning out to Splunk (HEC) + Datadog
 - **Mesh:** hybrid 7-service retail mesh + `load-gen` (see [`README.md`](README.md))
 - **Mock MCPs:** `splunk-mock-mcp` (port 8400) and `datadog-mock-mcp` (port 8401) stand in for live vendor MCPs until creds arrive; swapped via env vars with no code changes
+- **Agent maxTurns:** 20 (enough for the 10-step investigation protocol; do NOT reduce below 18 — Ollama non-determinism means some runs need up to 18 turns to complete)
 
 ## Commands (as implemented per phase)
 

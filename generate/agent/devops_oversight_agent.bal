@@ -141,7 +141,7 @@ function chat(string userMessage) returns string|error {
         return result.text;
     };
 
-    return check runConfiguredLlm(SYSTEM_PROMPT, userMessage, allTools, dispatcher, 12);
+    return check runConfiguredLlm(SYSTEM_PROMPT, userMessage, allTools, dispatcher, 20);
 }
 
 // ── Core investigation function ───────────────────────────────────────────────
@@ -217,7 +217,7 @@ function investigate(AlertRequest alert) returns string|error {
     };
 
     string userPrompt = buildInvestigationPrompt(alert.'service, alert.severity, alert.description, alert.id);
-    string summary = check runConfiguredLlm(SYSTEM_PROMPT, userPrompt, allTools, dispatcher, 12);
+    string summary = check runConfiguredLlm(SYSTEM_PROMPT, userPrompt, allTools, dispatcher, 20);
     log:printInfo("investigation complete", 'service = alert.'service);
     return summary;
 }

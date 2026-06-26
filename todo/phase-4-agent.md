@@ -62,7 +62,7 @@ MCP server URLs come from env vars with compose-internal defaults:
 - [x] Propose-before-act guardrail: agent must call `topology__list_runbooks`, explain its choice, then WAIT before calling `topology__run_runbook`
 - [x] `AGENT_MODEL` env var selects the Claude model for Anthropic backend (default `claude-sonnet-4-6`)
 - [x] `OLLAMA_MODEL` env var selects the Ollama model for Ollama backend (default `qwen3.5:9b`)
-- [x] `max_tokens: 8192`, `maxTurns: 12` for local models (reduced from 20 for faster demos) — configurable via env/Config.toml
+- [x] `max_tokens: 8192`, `maxTurns: 20` — enough for a full 10-step investigation plus retries; configurable via env/Config.toml
 
 ### 4.5 Trigger mechanism
 - [x] `POST /investigate` — structured `AlertRequest` body `{ service, severity, description, id }` — primary trigger for demo

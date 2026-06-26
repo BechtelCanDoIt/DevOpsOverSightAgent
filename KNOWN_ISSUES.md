@@ -11,13 +11,23 @@
 3. If build failed on `ANTHROPIC_API_KEY not set`, you hit the stale-jar VOLUME bug; rebuild with `docker compose build --no-cache devops-oversight-agent`
 4. If network unreachable, the agent may be waiting for an MCP server to initialize — check that mcp-server, splunk-mock-mcp, and datadog-mock-mcp are UP
 
+### Investigation returns "Investigation incomplete — max turns reached"
+**Symptom:** `make investigate` returns `{"status":"investigated","summary":"Investigation incomplete — max turns reached."}`.
+
+**Root cause:** Ollama models are non-deterministic about how many tool calls they make. The current `maxTurns` setting was too low for this particular model run.
+
+**Recovery:**
+1. Retry once — Ollama often completes in fewer turns on the next attempt.
+2. If it fails repeatedly, switch to the Anthropic backend: set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in `compose/.env`, then `docker compose up -d devops-oversight-agent`.
+3. The maxTurns is set to 20 in `devops_oversight_agent.bal`. Do not reduce below 18.
+
 ### Investigation hangs / takes >5 minutes
 **Symptom:** `make investigate` returns HTTP 200 but takes a very long time.
 
 **Root cause:** Local Ollama model investigations are sequential tool-call chains. With qwen3.5:9b, expect 1–3 minutes per investigation.
 
 **Recovery options:**
-1. **Speed up:** switch to a smaller Ollama model or use Anthropic Claude (requires real API key): set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in compose/.env
+1. **Speed up:** switch to Anthropic Claude (requires real API key): set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in compose/.env
 2. **Wait it out:** tail the agent logs (`docker compose logs -f devops-oversight-agent`) to watch tool calls progress. The investigation is still running.
 
 ### Agent returns "Tool error: connection refused" for MCPs
@@ -27,10 +37,33 @@
 1. Check all three MCP servers are healthy: `curl -s http://localhost:8290/health` (topology), `curl -s http://localhost:8400/health` (splunk-mock), `curl -s http://localhost:8401/health` (datadog-mock)
 2. If any is unhealthy, restart the stack: `docker compose down && docker compose up -d`
 
-### Chaos endpoints return connection refused
-**Symptom:** `make inject-chaos` or `make reset-chaos` fails with "connection refused".
+### Chaos endpoints return connection refused or HTTP 408
+**Symptom:** `make inject-chaos` returns `[warn] latency injection skipped (service not running?)` or `make reset-chaos` shows `skipped (HTTP 408)` or `skipped (HTTP 000000)`.
 
-**Root cause:** You're likely hitting the wrong port (e.g., internal 9099 instead of host 9191–9197).
+**Root cause:** A second Docker runtime (Colima agent-manager, Rancher Desktop, or another Lima VM) is running the same Compose stack and has grabbed ports 9191–9197 via its SSH port-forward before the primary runtime could.
+
+**Diagnosis:**
+```bash
+lsof -nP -iTCP:9196 -sTCP:LISTEN
+```
+If you see `ssh` listed (not blank), another VM's Lima is intercepting the port.
+
+**Recovery:**
+1. Find which Docker context has the duplicate stack:
+   ```bash
+   DOCKER_HOST=unix:///Users/scottbechtel/.colima/agent-manager/docker.sock docker ps | grep payment
+   ```
+2. Stop the duplicate stack in that context:
+   ```bash
+   DOCKER_HOST=unix:///Users/scottbechtel/.colima/agent-manager/docker.sock \
+     docker compose -f compose/docker-compose.yml down
+   ```
+3. Do a full cycle in the primary context to let Lima re-establish forwards:
+   ```bash
+   docker compose -f compose/docker-compose.yml down && docker compose -f compose/docker-compose.yml up -d
+   ```
+
+**Root cause of secondary port conflict:** You're likely hitting the wrong port (e.g., internal 9099 instead of host 9191–9197).
 
 **Recovery:** The demo scripts auto-discover the host ports. Run `make inject-chaos` or `make reset-chaos` directly; do not hand-craft chaos URLs.
 
