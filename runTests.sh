@@ -167,13 +167,45 @@ printf '%-16s  %s\n' "SERVICE" "RESULT"
 printf '%-16s  %s\n' "---------------" "----------------------------------------"
 overall=0
 failed_svcs=""
+total_pass_svcs=0
+total_fail_svcs=0
+total_tests_passing=0
+total_tests_failing=0
+total_tests_skipped=0
 while IFS=$'\t' read -r svc status; do
   printf '%-16s  %s\n' "$svc" "$status"
+  log="$LOG_DIR/$svc.log"
+  if [ -f "$log" ]; then
+    n=$(grep -E '^[[:space:]]*[0-9]+ passing' "$log" | tail -1 | grep -oE '[0-9]+' | head -1 || true)
+    f=$(grep -E '^[[:space:]]*[0-9]+ failing'  "$log" | tail -1 | grep -oE '[0-9]+' | head -1 || true)
+    s=$(grep -E '^[[:space:]]*[0-9]+ skipped'  "$log" | tail -1 | grep -oE '[0-9]+' | head -1 || true)
+    total_tests_passing=$((total_tests_passing + ${n:-0}))
+    total_tests_failing=$((total_tests_failing  + ${f:-0}))
+    total_tests_skipped=$((total_tests_skipped  + ${s:-0}))
+  fi
   case "$status" in
-    PASS*) ;;
-    *) overall=1; failed_svcs="$failed_svcs $svc" ;;
+    PASS*) total_pass_svcs=$((total_pass_svcs + 1)) ;;
+    *) overall=1; total_fail_svcs=$((total_fail_svcs + 1)); failed_svcs="$failed_svcs $svc" ;;
   esac
 done < "$RESULTS_TSV"
+total_svcs=$((total_pass_svcs + total_fail_svcs))
+total_tests=$((total_tests_passing + total_tests_failing))
+echo
+echo "────────────────────────────────────────────────────────────────────────"
+printf ' Services : %d / %d passed' "$total_pass_svcs" "$total_svcs"
+if [ "$total_fail_svcs" -gt 0 ]; then
+  printf '  (%d failed)' "$total_fail_svcs"
+fi
+echo
+printf ' Tests    : %d / %d passing' "$total_tests_passing" "$total_tests"
+if [ "$total_tests_failing" -gt 0 ]; then
+  printf '  (%d failing)' "$total_tests_failing"
+fi
+if [ "$total_tests_skipped" -gt 0 ]; then
+  printf '  (%d skipped)' "$total_tests_skipped"
+fi
+echo
+echo "════════════════════════════════════════════════════════════════════════"
 echo
 echo "Per-service logs: $LOG_DIR"
 
