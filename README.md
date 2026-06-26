@@ -30,7 +30,7 @@ make reset-chaos
 # Demo complete. Mesh recovers within 30s. Full end-to-end: ~5 min.
 ```
 
-**If Ollama is not reachable:** set `LLM_PROVIDER=anthropic` in `compose/.env` + add a real `ANTHROPIC_API_KEY=sk-ant-api03-…` key, then run the same steps. (Anthropic is faster, ~30–60s total investigation.)
+**If Ollama is not reachable:** set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in `compose/.env`, or `LLM_PROVIDER=openai` + `OPENAI_API_KEY=sk-…`. Anthropic/OpenAI runs are faster (~30–60 s vs 1–3 min for local Ollama). See the [LLM provider reference](#trigger-a-live-agent-investigation) for the full table.
 
 **Full rehearsal (all steps + startup):**
 ```bash
@@ -108,17 +108,31 @@ The Ballerina MCP server speaks **Streamable HTTP** (plain HTTP POST at `/mcp`) 
   ---
 ### Trigger a live agent investigation
 
-The agent's LLM backend is configurable via `LLM_PROVIDER` (set in `compose/.env` or the environment):
+The agent's LLM backend is controlled by `LLM_PROVIDER` in `compose/.env`. The same image runs locally and in AMP — switching is purely env-var-driven, no code changes.
 
-- **`ollama` (default) — local, creds-free.** Needs Ollama running on the host with a tool-capable model (e.g. `qwen3.5:9b`). Override `OLLAMA_BASE_URL` (default `http://host.docker.internal:11434`) and `OLLAMA_MODEL`. No API key, no cost.
-- **`anthropic` — Anthropic Claude.** Needs a real `ANTHROPIC_API_KEY=sk-ant-api03-…` (an `sk-ant-oat01-` OAuth token will NOT work for direct calls) and optionally `AGENT_MODEL`.
+**Running locally (`make rehearse` / standalone):**
 
-```
-  # Ollama (default): just have Ollama up with a tool-capable model, then:
-  make investigate
-  # The agent calls all three MCPs, runs the tool-use loop, and returns a JSON
-  # summary with its diagnosis + a proposed runbook (it stops for approval before acting).
-  # Local-model runs take ~1–3 min; Anthropic is faster. Agent is on host port 8092.
+| Want | `compose/.env` |
+|---|---|
+| Creds-free (default) | `LLM_PROVIDER=ollama` (needs Ollama on host with a tool-capable model, e.g. `qwen3.5:9b`) |
+| Anthropic direct | `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` (`sk-ant-oat01-` OAuth tokens do NOT work for direct calls) |
+| OpenAI direct | `LLM_PROVIDER=openai` + `OPENAI_API_KEY=sk-…` (optionally `OPENAI_BASE_URL` for a compatible endpoint, `OPENAI_MODEL`) |
+
+**Deployed into AMP — no `.env` changes needed:**
+
+| AMP LLM config | What to set | How it works |
+|---|---|---|
+| AMP routes to Anthropic | `LLM_PROVIDER=anthropic` as a component env var | AMP automatically injects `ANTHROPIC_URL` pointing at its AI gateway; `anthropic_client.bal` reads it with `envOr("ANTHROPIC_URL", "https://api.anthropic.com")` — the redirect is seamless |
+| AMP routes to any other model (GPT-4o, Llama, etc.) | `LLM_PROVIDER=amp` as a component env var, `LLM_MODEL=<model>` | AMP injects `LLM_BASE_URL` for its OpenAI-compatible gateway; `llm_client.bal` picks it up and routes to `runOpenAICompatLoop`; `LLM_API_KEY` is optional (AMP may handle auth at the gateway) |
+
+> **Key invariant:** `ANTHROPIC_URL` and `LLM_BASE_URL` are never set in your local `.env` or compose file — they're absent locally (code falls back to the real public endpoints) and only appear when AMP deploys the component. You never edit the image or the code to switch environments.
+
+```bash
+# Ollama (default): just have Ollama up with a tool-capable model, then:
+make investigate
+# The agent calls all three MCPs, runs the tool-use loop, and returns a JSON
+# summary with its diagnosis + a proposed runbook (it stops for approval before acting).
+# Local-model runs take ~1–3 min; Anthropic/OpenAI is faster (~30–60 s). Agent is on host port 8092.
 ```
 
   ---
@@ -313,9 +327,9 @@ The glue between Splunk and Datadog: it owns the **service catalog, dependency g
 
 The incident-response **Ballerina agent** (`generate/agent/`) runs under WSO2 Agent Manager on Kubernetes/kind. See [`todo/phase-4-agent.md`](todo/phase-4-agent.md).
 
-- **Framework / LLM:** Ballerina, calling **Anthropic Claude** (Messages API tool-use loop) directly via HTTP — no SDK required. Packaged as a Docker image built from `generate/agent/Dockerfile`. OTel instrumentation is native (same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services).
+- **Framework / LLM:** Ballerina, native tool-use loop — no SDK required. LLM backend is configurable via `LLM_PROVIDER`: `ollama` (local, creds-free, default), `anthropic` (Anthropic Messages API), `openai` (OpenAI or any compatible endpoint), `amp` (WSO2 AMP AI gateway, OpenAI-compatible; AMP injects the endpoint URL). All logic is in `generate/agent/llm_client.bal`; `anthropic_client.bal` handles the Anthropic-specific response format. Packaged as a Docker image built from `generate/agent/Dockerfile`. OTel instrumentation is native (same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services).
 - **MCP wiring:** connects to all three MCP servers via `generate/agent/mcp_client.bal` — Splunk mock MCP (`:8400`), Datadog mock MCP (`:8401`), and the custom Ballerina MCP (`:8290`). URLs are injected as env vars so swapping to live vendor MCPs requires only `.env` / amp-console secret changes — no code changes.
-- **Behavior / guardrail:** the system prompt drives a fixed 10-step triage loop — monitors → metrics → trace → correlate → logs → blast radius → deploys → history → **propose a runbook before running it** → summarize. The **propose-before-act** guardrail is hard: the agent must call `list_runbooks` and present its choice for human approval *before* it may call `run_runbook`. Max turns (`20`) and model (`claude-sonnet-4-6`) are configurable via env vars.
+- **Behavior / guardrail:** the system prompt drives a 10-step triage loop — monitors → metrics → trace → correlate → logs → blast radius → deploys → history → **propose a runbook before running it** → summarize. Topology tools are always in context; Splunk/Datadog tools are loaded on demand via `discover_tools` (lazy loading — scales to the real vendor MCPs which expose 50+ tools each). The **propose-before-act** guardrail is hard: the agent must call `list_runbooks` and present its choice for human approval *before* it may call `run_runbook`. Max turns (`30`) and model are configurable via env vars.
 - **Triggers:** `POST /investigate` (structured alert body) or `POST /webhook/alert` (Datadog webhook format) — both exposed on `:8080`. In the live demo, a **Datadog-monitor webhook** fires `POST /webhook/alert` automatically when the `payment-service` error rate exceeds threshold.
 - **Self-observability (the meta-win):** the agent's OTel spans flow through the same OTel Collector as the mesh — its reasoning trace, per-LLM-call latency, and tool-call durations are visible in Datadog alongside the workload it's diagnosing. The agent watches the workload; Datadog watches the agent.
 
@@ -356,11 +370,14 @@ Once the control plane is up, create a **Platform-Hosted** agent in `http://loca
 
 | Variable | Value (mock mode) |
 |----------|------------------|
-| `ANTHROPIC_API_KEY` | your Anthropic API key (`sk-ant-…`) |
+| `LLM_PROVIDER` | `anthropic` to use Anthropic directly; `amp` to let AMP route to any model via its AI gateway |
+| `ANTHROPIC_API_KEY` | your Anthropic API key (`sk-ant-…`) — required when `LLM_PROVIDER=anthropic` |
 | `SPLUNK_MCP_URL` | `http://host.k3d.internal:8400` |
 | `DATADOG_MCP_URL` | `http://host.k3d.internal:8401` |
 | `BALLERINA_TOPOLOGY_MCP_URL` | `http://host.k3d.internal:8290` |
 | `OTEL_SERVICE_NAME` | `devops-oversight-agent` |
+
+> When `LLM_PROVIDER=anthropic`, AMP automatically injects `ANTHROPIC_URL` so all Anthropic calls route through AMP's AI gateway (rate-limiting, audit, token tracking). When `LLM_PROVIDER=amp`, AMP injects `LLM_BASE_URL` for its OpenAI-compatible gateway — set `LLM_MODEL` to the model you want AMP to route to. You do **not** set `ANTHROPIC_URL` or `LLM_BASE_URL` yourself; they are AMP-injected.
 
 **Verify and trigger:**
 

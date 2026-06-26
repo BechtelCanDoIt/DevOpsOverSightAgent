@@ -19,14 +19,18 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 
 ## Locked Decisions (Phase 0 + override)
 
-- **LLM:** **Configurable via `LLM_PROVIDER` env var**: `anthropic` (Anthropic Claude, direct HTTP; requires `sk-ant-api03-…` key) or `ollama` (local model, creds-free; default `qwen3.5:9b` at `host.docker.internal:11434`). Both paths in code (`anthropic_client.bal` + `ollama_client.bal`).
+- **LLM:** **Configurable via `LLM_PROVIDER` env var** — all four providers are in `generate/agent/llm_client.bal`:
+  - `anthropic` (default) — Anthropic Messages API; AMP proxy via `ANTHROPIC_URL`; requires `ANTHROPIC_API_KEY`
+  - `ollama` — local Ollama `/api/chat`; creds-free; default model `qwen3.5:9b` at `OLLAMA_BASE_URL`
+  - `openai` — OpenAI `/v1/chat/completions`; override endpoint with `OPENAI_BASE_URL`; requires `OPENAI_API_KEY`
+  - `amp` — WSO2 AMP AI gateway (OpenAI-compatible); AMP injects `LLM_BASE_URL` + optional `LLM_API_KEY`; set `LLM_MODEL`
 - **Agent framework:** **Ballerina** (overrides Phase 0 Python decision — entire stack is Ballerina; Ballerina OTel covers Agent Manager observability needs)
 - **Kubernetes:** kind cluster
 - **Splunk:** Cloud trial (not Enterprise container); telemetry ships via the OTel Collector's `splunk_hec` exporter
 - **Telemetry:** single OTel Collector fanning out to Splunk (HEC) + Datadog
 - **Mesh:** hybrid 7-service retail mesh + `load-gen` (see [`README.md`](README.md))
 - **Mock MCPs:** `splunk-mock-mcp` (port 8400) and `datadog-mock-mcp` (port 8401) stand in for live vendor MCPs until creds arrive; swapped via env vars with no code changes
-- **Agent maxTurns:** 20 (enough for the 10-step investigation protocol; do NOT reduce below 18 — Ollama non-determinism means some runs need up to 18 turns to complete)
+- **Agent maxTurns:** 30 (bumped from 20 to absorb discover_tools overhead from lazy loading; do NOT reduce below 25 — Ollama non-determinism plus discovery turns mean some runs need up to 25 turns)
 
 ## Commands (as implemented per phase)
 

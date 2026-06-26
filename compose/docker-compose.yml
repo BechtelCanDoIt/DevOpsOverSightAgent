@@ -302,12 +302,22 @@ services:
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: devops-oversight-agent
-      # LLM backend — switch with LLM_PROVIDER (ollama|anthropic). Compose defaults to local Ollama.
+      # LLM backend — set LLM_PROVIDER in .env to switch (default: ollama, creds-free).
+      # ollama:     OLLAMA_BASE_URL + OLLAMA_MODEL
+      # anthropic:  ANTHROPIC_API_KEY + AGENT_MODEL  (AMP injects ANTHROPIC_URL automatically)
+      # openai:     OPENAI_API_KEY; optionally OPENAI_BASE_URL + OPENAI_MODEL
+      # amp:        AMP injects LLM_BASE_URL; optionally LLM_API_KEY + LLM_MODEL
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AGENT_MODEL: ${AGENT_MODEL:-claude-sonnet-4-6}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o}
       SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
       DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
       BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-server:8290}
