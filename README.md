@@ -29,13 +29,15 @@ make reset-chaos
 
 # Demo complete. Mesh recovers within 30s. Full end-to-end: ~5 min.
 ```
-
 **If Ollama is not reachable:** set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in `compose/.env`, or `LLM_PROVIDER=openai` + `OPENAI_API_KEY=sk-…`. Anthropic/OpenAI runs are faster (~30–60 s vs 1–3 min for local Ollama). See the [LLM provider reference](#trigger-a-live-agent-investigation) for the full table.
 
 **Full rehearsal (all steps + startup):**
 ```bash
 make rehearse
 ```
+
+**Manual Demo:**
+See [manualdemo.md](demo/manualdemo.md)
 
 ---
 

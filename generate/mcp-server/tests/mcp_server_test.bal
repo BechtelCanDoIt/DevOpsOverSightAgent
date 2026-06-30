@@ -159,7 +159,33 @@ function testRunUnknownRunbookErrors() {
 
 @test:Config {}
 function testAuditLogPopulated() {
-    string[]|error auditResult = executeRunbook("restart-service", {"service": "payment-service"});
-    boolean ignored = auditResult is error;
+    string[]|error result = executeRunbook("restart-service", {"service": "payment-service"});
+    test:assertFalse(result is error, "runbook must not error");
     test:assertTrue(getAuditLog().length() > 0, "audit log must have entries after runbook");
+}
+
+@test:Config {}
+function testGetAuditLogToolReturnsEntries() {
+    string|error result = dispatchTool("get_audit_log", {});
+    test:assertFalse(result is error, "get_audit_log must not error");
+    if result is string { test:assertTrue(result.includes("entries"), "response must include entries field"); }
+}
+
+@test:Config {}
+function testGetDeployFreezeStatusToolFormat() {
+    string|error result = dispatchTool("get_deploy_freeze_status", {});
+    test:assertFalse(result is error, "get_deploy_freeze_status must not error");
+    if result is string { test:assertTrue(result.includes("frozen"), "response must include frozen field"); }
+}
+
+@test:Config {}
+function testDeployFreezeStatusReflectsRunbook() {
+    string[]|error steps = executeRunbook("freeze-deploys", {"reason": "mcp-tool-test"});
+    test:assertFalse(steps is error);
+    string|error result = dispatchTool("get_deploy_freeze_status", {});
+    test:assertFalse(result is error);
+    if result is string {
+        test:assertTrue(result.includes("true"), "frozen must be true after freeze-deploys runbook");
+        test:assertTrue(result.includes("mcp-tool-test"), "reason must appear in response");
+    }
 }

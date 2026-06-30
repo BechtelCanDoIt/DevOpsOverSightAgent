@@ -49,40 +49,46 @@ service /mcp on mcpListener {
 function buildToolsListResponse(json? id) returns json|error {
     json[] tools = [
         {name: "lookup_service",
-         description: "Look up a service by name — returns owner, dependencies, runbooks, SLA, health endpoint.",
+         description: "[topology] Look up a service by name — returns owner, dependencies, runbooks, SLA, health endpoint.",
          inputSchema: {'type: "object", properties: {name: {'type: "string"}}, required: ["name"]}},
         {name: "get_dependencies",
-         description: "Get dependency graph. direction=downstream/upstream/both.",
+         description: "[topology] Get dependency graph. direction=downstream/upstream/both.",
          inputSchema: {'type: "object",
              properties: {name: {'type: "string"}, direction: {'type: "string", 'enum: ["upstream","downstream","both"]}},
              required: ["name","direction"]}},
         {name: "list_services",
-         description: "List all 7 mesh services.",
+         description: "[topology] List all 7 mesh services.",
          inputSchema: {'type: "object", properties: {}}},
         {name: "get_service_health",
-         description: "Probe a service health endpoint live.",
+         description: "[topology] Probe a service health endpoint live.",
          inputSchema: {'type: "object", properties: {name: {'type: "string"}}, required: ["name"]}},
         {name: "correlate_trace",
-         description: "Given a trace_id, return Datadog URL + Splunk SPL + involved services.",
+         description: "[correlation] Given a trace_id, return Datadog URL + Splunk SPL + involved services.",
          inputSchema: {'type: "object", properties: {trace_id: {'type: "string"}}, required: ["trace_id"]}},
         {name: "find_recent_deploys",
-         description: "Find recent deployments for a service.",
+         description: "[correlation] Find recent deployments for a service.",
          inputSchema: {'type: "object",
              properties: {'service: {'type: "string"}, lookback_minutes: {'type: "integer"}},
              required: ["service"]}},
         {name: "find_related_incidents",
-         description: "Search past incidents for a service.",
+         description: "[correlation] Search past incidents for a service.",
          inputSchema: {'type: "object",
              properties: {'service: {'type: "string"}, lookback_days: {'type: "integer"}},
              required: ["service"]}},
         {name: "list_runbooks",
-         description: "List all available runbooks.",
+         description: "[runbook] List all available runbooks.",
          inputSchema: {'type: "object", properties: {}}},
         {name: "run_runbook",
-         description: "Execute a runbook. Always propose to operator before calling.",
+         description: "[runbook] Execute a runbook. Always propose to operator before calling.",
          inputSchema: {'type: "object",
              properties: {id: {'type: "string"}, params: {'type: "object"}},
-             required: ["id"]}}
+             required: ["id"]}},
+        {name: "get_audit_log",
+         description: "[runbook] Return the runbook execution audit log for this session.",
+         inputSchema: {'type: "object", properties: {}}},
+        {name: "get_deploy_freeze_status",
+         description: "[runbook] Check whether a deploy freeze is active and why.",
+         inputSchema: {'type: "object", properties: {}}}
     ];
     return {jsonrpc: "2.0", result: {tools: tools}, id: id};
 }
@@ -165,6 +171,12 @@ function dispatchTool(string toolName, json arguments) returns string|error {
         string[]|error steps = executeRunbook(rbId, params);
         if steps is error { return error(string `Runbook error: ${steps.message()}`); }
         return {runbook: rbId, steps: steps}.toJsonString();
+    }
+    if toolName == "get_audit_log" {
+        return {entries: getAuditLog()}.toJsonString();
+    }
+    if toolName == "get_deploy_freeze_status" {
+        return {frozen: isDeployFrozen(), reason: getDeployFreezeReason()}.toJsonString();
     }
     return error(string `Unknown tool: ${toolName}`);
 }
