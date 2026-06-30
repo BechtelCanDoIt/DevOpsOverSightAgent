@@ -14,7 +14,7 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 
 ## Source layout
 
-- `generate/` — all Ballerina source, one package per directory; includes 7 mesh services, `load-gen`, `mcp-server` (topology MCP), `agent` (DevOps OverSight agent), `splunk-mock-mcp`, and `datadog-mock-mcp`.
+- `generate/` — all Ballerina source, one package per directory; includes 7 mesh services, `load-gen`, `mcp-server` (MCP Proxy — single agent entry point, proxies to Splunk/Datadog MCPs), `agent` (DevOps OverSight agent), `splunk-mock-mcp`, and `datadog-mock-mcp`.
 - `compose/` — Docker Compose stack (Phase 1) · `catalog/` — MCP service catalog (Phase 3) · `demo/` — demo scripts (Phase 5) · `todo/` — phase specs.
 
 ## Locked Decisions (Phase 0 + override)
@@ -51,8 +51,19 @@ curl -X POST http://localhost:8092/investigate \
   -H "Content-Type: application/json" \
   -d '{"service":"payment-service","severity":"P1","description":"502 spike"}'
 
-# Phase 4 — Inject chaos (payment-service chaos port published as 9196)
-curl -X POST http://localhost:9196/chaos/enable \
+# Phase 4 — Inject chaos into payment-service (chaos port published as 9196)
+# 502 errors at 80% rate for 5 min:
+curl -X POST http://localhost:9196/chaos/error \
+  -H "X-Chaos-Token: dev-chaos-token" \
+  -H "Content-Type: application/json" \
+  -d '{"rate": 0.8, "status": 502, "duration_s": 300}'
+# Latency injection (ms + duration_s):
+curl -X POST http://localhost:9196/chaos/latency \
+  -H "X-Chaos-Token: dev-chaos-token" \
+  -H "Content-Type: application/json" \
+  -d '{"ms": 2000, "duration_s": 300}'
+# Reset all chaos:
+curl -X POST http://localhost:9196/chaos/reset \
   -H "X-Chaos-Token: dev-chaos-token"
 
 # Phase 5 — SaaS demo (requires DD_API_KEY, DD_SITE, SPLUNK_HEC_TOKEN, SPLUNK_HEC_URL, SPLUNK_INDEX in compose/.env)
@@ -76,7 +87,7 @@ make rehearse
 | 0 | Prerequisites & decisions | Nearly complete — tools verified, all decisions locked (`decisions.md`), WSO2 Agent Manager installed. Remaining: manual console login + stub project + sample agent smoke test |
 | 1 | Docker Compose observability stack | Scaffolded — compose stack + OTel Collector + Postgres init built; local OTLP smoke test passing. Real Splunk/Datadog exporters + smoke test pending trial creds |
 | 2 | Ballerina service mesh + traffic generator | Mostly complete — 8 packages (7 services + load-gen) build clean & runtime-validated, 80 unit tests passing. Live Datadog/Splunk verification (§2.7) deferred to test time (creds) |
-| 3 | Ballerina MCP server | Mostly complete — 9-tool MCP server built & tested (22 tests), 4 runbooks, audit log, OTel instrumented, compose wired. Remaining: bearer-token auth, live inspector verification |
+| 3 | MCP Proxy (`mcp-server`) | Mostly complete — 9-tool proxy built & tested (22 tests), 4 runbooks, audit log, OTel instrumented, compose wired. Remaining: bearer-token auth, live Splunk/DD proxy routing, live inspector verification |
 | 4 | Ballerina agent (+ mock MCPs) | Mostly complete — Ballerina agent with Anthropic tool-use loop built & tested (8 tests); splunk-mock-mcp (8 tests) + datadog-mock-mcp (11 tests) built; all compose-wired. Remaining: end-to-end investigation test, Datadog webhook config, Agent Manager deploy (optional) |
 | 5 | Demo rehearsal & verification | Not started |
 

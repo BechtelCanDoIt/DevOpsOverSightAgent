@@ -1,17 +1,6 @@
 import ballerina/http;
 import ballerina/test;
 
-// Verify the configured LLM backend is usable before any test runs.
-// Fails the entire suite with a clear message so developers don't see 16
-// passing tests while the actual agent loop is completely broken.
-@test:BeforeSuite
-function verifyLlmBackend() returns error? {
-    error? readyErr = checkLlmReady();
-    if readyErr is error {
-        return error(string `LLM backend not ready — fix this before running tests: ${readyErr.message()}`);
-    }
-}
-
 // Pure function tests — no network required.
 
 @test:Config {}

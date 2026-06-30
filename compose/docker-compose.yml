@@ -37,6 +37,10 @@ x-ballerina-build: &ballerina-build
 
 services:
   # ── Observability + infra ──────────────────────────────────────────────────
+
+  # Receives OTLP telemetry from all mesh services and fans out to Splunk (HEC)
+  # and Datadog. The default config exports to stdout (debug exporter) — swap in
+  # the real exporters in otel-collector/config.yaml when SaaS creds are ready.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.119.0
     command: ["--config=/etc/otel/config.yaml"]
@@ -48,6 +52,9 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Shared relational store for five mesh services (store, customer, order,
+  # inventory, invoice). Persisted via a named volume; initialized with
+  # postgres/init.sql on first boot.
   postgres:
     image: postgres:16-alpine
     environment:
@@ -66,11 +73,13 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # In-memory cache for inventory-service hot-path stock lookups. Port is
+  # published so `bal test` on the host can reach it directly.
   redis:
     image: redis:7-alpine
     networks: [devops-poc]
     ports:
-      - "6379:6379"   # exposed so `bal test` on the host can reach it
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -78,13 +87,16 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Message bus for the async order → notification flow. JetStream is enabled
+  # for durable consumer support; the monitoring port is useful for diagnosing
+  # message backlogs. Port 4222 is published so `bal test` on the host can reach it.
   nats:
     image: nats:2.10-alpine
     command: ["-js", "-m", "8222"]   # JetStream + monitoring endpoint
     networks: [devops-poc]
     ports:
-      - "4222:4222"   # client port — exposed so `bal test` on the host can reach it
-      - "8222:8222"   # monitoring (optional, but handy)
+      - "4222:4222"   # client port
+      - "8222:8222"   # monitoring
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz || exit 1"]
       interval: 5s
@@ -92,6 +104,8 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # All-in-one local trace UI (--profile dev only). Receives OTLP from the
+  # Collector and serves the Jaeger UI on :16686. Not needed in production paths.
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
     profiles: [dev]
@@ -102,6 +116,8 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Datadog Agent sidecar (--profile saas only). Forwards APM traces and
+  # DogStatsD metrics to Datadog Cloud; requires DD_API_KEY in compose/.env.
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
     profiles: [saas]
@@ -117,6 +133,9 @@ services:
     restart: unless-stopped
 
   # ── Mesh: 7 services + load-gen ─────────────────────────────────────────────
+
+  # Storefront / product catalog service. Handles browse and search; calls
+  # inventory for stock checks. Chaos levers: latency, 500.
   store:
     build: { context: ../generate/store, <<: *ballerina-build }
     image: devops-poc/store-service
@@ -133,6 +152,8 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Customer profile service. Handles account lookup and registration; backed
+  # by Postgres. Chaos levers: latency, 500.
   customer:
     build: { context: ../generate/customer, <<: *ballerina-build }
     image: devops-poc/customer-service
@@ -147,6 +168,9 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Front-door order orchestrator. Validates with customer, reserves inventory,
+  # charges via payment, issues invoice, and publishes a NATS notification.
+  # Chaos levers: DB slow query, 500.
   order:
     build: { context: ../generate/order, <<: *ballerina-build }
     image: devops-poc/order-service
@@ -171,6 +195,8 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Stock reservation service with Redis-backed hot cache; cache misses fall
+  # through to Postgres. Chaos levers: cache eviction latency spike.
   inventory:
     build: { context: ../generate/inventory, <<: *ballerina-build }
     image: devops-poc/inventory-service
@@ -188,6 +214,8 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Billing record generator. Creates invoice documents per order; backed by
+  # Postgres. Chaos levers: latency, 500.
   invoice:
     build: { context: ../generate/invoice, <<: *ballerina-build }
     image: devops-poc/invoice-service
@@ -202,6 +230,8 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Mock payment processor — the headline demo chaos target. Chaos levers:
+  # timeout and sporadic 502, which cascade through order and trigger the agent.
   payment:
     build: { context: ../generate/payment, <<: *ballerina-build }
     image: devops-poc/payment-service
@@ -214,6 +244,8 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Async order-confirmation sender. Subscribes to NATS; slow-consumer backlog
+  # can be injected to demonstrate downstream impact. Chaos levers: backlog.
   notification:
     build: { context: ../generate/notification, <<: *ballerina-build }
     image: devops-poc/notification-service
@@ -228,6 +260,8 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Continuous traffic generator driving realistic retail workloads across all
+  # front-door services. Controlled by LOADGEN_PATTERN (baseline, spike, etc.).
   load-gen:
     build: { context: ../generate/load-gen, <<: *ballerina-build }
     image: devops-poc/load-gen
@@ -249,29 +283,41 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
-  # ── Ballerina MCP server (Phase 3) ────────────────────────────────────────
-  mcp-server:
+  # ── MCP layer ─────────────────────────────────────────────────────────────
+
+  # Lightweight MCP proxy — the single MCP entry point for the agent. Exposes
+  # topology, cross-system correlation, and runbook tools locally, and proxies
+  # Splunk and Datadog tool calls to the respective MCP backends. Swap
+  # SPLUNK_MCP_URL / DATADOG_MCP_URL to point at real SaaS MCPs when creds arrive.
+  mcp-proxy:
     build:
       context: ../generate/mcp-server
       <<: *ballerina-build
-    image: devops-poc/mcp-server:latest
+    image: devops-poc/mcp-proxy:latest
     environment:
       <<: *otel-env
-      OTEL_SERVICE_NAME: mcp-server
+      OTEL_SERVICE_NAME: mcp-proxy
       DD_SITE: ${DD_SITE:-datadoghq.com}
       SPLUNK_URL: ${SPLUNK_URL:-https://your-splunk.splunkcloud.com}
+      # Downstream MCP backends — swapped to real SaaS endpoints when creds arrive.
+      SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
+      DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
     ports:
       - "8290:8290"
     networks: [devops-poc]
     restart: unless-stopped
+    depends_on:
+      - splunk-mock-mcp
+      - datadog-mock-mcp
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8290/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
 
-  # ── Mock MCP servers — default until real SaaS creds arrive ─────────────────
-  # (swap via SPLUNK_MCP_URL / DATADOG_MCP_URL env vars when real MCPs are ready)
+  # Mock Splunk MCP server. Implements the same MCP tool surface as the official
+  # Splunk MCP (Splunkbase app 7931) with deterministic fixture responses.
+  # Replace by setting SPLUNK_MCP_URL on mcp-proxy to the real Splunk Cloud endpoint.
   splunk-mock-mcp:
     build:
       context: ../generate/splunk-mock-mcp
@@ -282,6 +328,9 @@ services:
     networks: [devops-poc]
     restart: unless-stopped
 
+  # Mock Datadog MCP server. Mirrors the Datadog MCP tool surface
+  # (mcp.datadoghq.com) with canned APM/metrics/monitor responses.
+  # Replace by setting DATADOG_MCP_URL on mcp-proxy to the real Datadog endpoint.
   datadog-mock-mcp:
     build:
       context: ../generate/datadog-mock-mcp
@@ -293,6 +342,11 @@ services:
     restart: unless-stopped
 
   # ── DevOps agent (Phase 4) ────────────────────────────────────────────────
+
+  # Ballerina LLM agent and incident responder. Triggered via POST /chat
+  # (AMP protocol) or POST /investigate (structured alert). Runs a 10-step
+  # triage loop, calls mcp-proxy for all MCP tools, and proposes runbooks
+  # before executing them. LLM backend is configurable via LLM_PROVIDER.
   devops-oversight-agent:
     build:
       context: ../
@@ -318,17 +372,17 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o}
+      # Single MCP entry point — the proxy aggregates all three tool namespaces.
+      # TODO: once mcp-proxy implements full proxying, remove the two direct URLs below.
+      BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-proxy:8290}
       SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
       DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
-      BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-server:8290}
     ports:
       - "8092:8000"  # listener on 8000. host 8082/8080 are taken by Colima's AMP-VM port-forward, so use 8092
     networks: [devops-poc]
     restart: unless-stopped
     depends_on:
-      - mcp-server
-      - splunk-mock-mcp
-      - datadog-mock-mcp
+      - mcp-proxy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8000/health || exit 1"]
       interval: 30s
