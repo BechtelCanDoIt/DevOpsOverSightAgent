@@ -26,6 +26,21 @@ type ChatRequest record {
     string conversationId = "";
 };
 
+// ── Startup: LLM readiness check ─────────────────────────────────────────────
+// Logs a clear error if the LLM backend is unreachable or misconfigured.
+// For ollama: also attempts to pull the model if missing.
+// Does not crash the service so /health remains reachable for diagnostics.
+function init() {
+    string provider = envOr("LLM_PROVIDER", "anthropic");
+    error? readyErr = checkLlmReady();
+    if readyErr is error {
+        log:printError("LLM backend not ready — investigations will fail until this is resolved",
+            'error = readyErr, provider = provider);
+    } else {
+        log:printInfo("LLM backend ready", provider = provider);
+    }
+}
+
 // ── Listener on :8000 (AMP Platform-Hosted default) ─────────────────────────
 // Long idle timeout: investigations can take minutes with many sequential tool calls.
 listener http:Listener agentListener = new (8000, {timeout: 600});

@@ -150,6 +150,91 @@ function runOllamaLoop(
     return finalText;
 }
 
+// ── LLM readiness checks ─────────────────────────────────────────────────────
+// Called at test suite setup (@test:BeforeSuite) and agent module init.
+// For ollama: verifies the daemon is running and the model is installed,
+// pulling it automatically if missing. For API-key providers: validates the
+// required env vars are set.
+
+function checkLlmReady() returns error? {
+    string provider = envOr("LLM_PROVIDER", "anthropic");
+    if provider == "ollama" {
+        string baseUrl = envOr("OLLAMA_BASE_URL", "http://host.docker.internal:11434");
+        string model = envOr("OLLAMA_MODEL", "qwen3.5:9b");
+        return check checkOllamaReady(baseUrl, model);
+    }
+    if provider == "anthropic" {
+        if envOr("ANTHROPIC_API_KEY", "") == "" {
+            return error("ANTHROPIC_API_KEY is not set (LLM_PROVIDER=anthropic).");
+        }
+        return;
+    }
+    if provider == "openai" {
+        if envOr("OPENAI_API_KEY", "") == "" {
+            return error("OPENAI_API_KEY is not set (LLM_PROVIDER=openai).");
+        }
+        return;
+    }
+    if provider == "amp" {
+        if envOr("LLM_BASE_URL", "") == "" {
+            return error("LLM_BASE_URL is not set (LLM_PROVIDER=amp). AMP must inject this env var.");
+        }
+        return;
+    }
+    return error(string `Unknown LLM_PROVIDER '${provider}'. Valid values: anthropic, ollama, openai, amp.`);
+}
+
+function checkOllamaReady(string baseUrl, string model) returns error? {
+    log:printInfo("checking Ollama", baseUrl = baseUrl, model = model);
+    http:Client ollama = check new (baseUrl, timeout = 10);
+
+    // 1 — Is the daemon reachable?
+    http:Response|error tagsResp = ollama->get("/api/tags");
+    if tagsResp is error {
+        return error(string `Ollama daemon not reachable at ${baseUrl}: ${tagsResp.message()}. ` +
+            "Install from https://ollama.com and run 'ollama serve' (or open the Ollama app on macOS).");
+    }
+    if tagsResp.statusCode != 200 {
+        return error(string `Ollama at ${baseUrl} returned HTTP ${tagsResp.statusCode}. Ensure the daemon is running.`);
+    }
+
+    // 2 — Is the model installed?
+    json body = check tagsResp.getJsonPayload();
+    boolean modelFound = false;
+    json|error modelsField = body.models;
+    if modelsField is json[] {
+        foreach json m in modelsField {
+            json|error nameField = m.name;
+            if nameField is string && (nameField == model || nameField.startsWith(model)) {
+                modelFound = true;
+                break;
+            }
+        }
+    }
+
+    if modelFound {
+        log:printInfo("Ollama ready", model = model);
+        return;
+    }
+
+    // 3 — Model missing: attempt auto-pull.
+    log:printInfo(string `Model '${model}' not found locally — pulling (this may take several minutes)...`);
+    http:Client puller = check new (baseUrl, timeout = 600);
+    http:Response|error pullResp = puller->post("/api/pull", {name: model, 'stream: false});
+    if pullResp is error {
+        return error(string `Model '${model}' not installed and auto-pull failed: ${pullResp.message()}. ` +
+            string `Run manually: ollama pull ${model}`);
+    }
+    if pullResp.statusCode != 200 {
+        json|error pullBody = pullResp.getJsonPayload();
+        string detail = pullBody is json ? pullBody.toJsonString() : "";
+        string suffix = detail != "" ? string `: ${detail}` : "";
+        return error(string `Model '${model}' pull returned HTTP ${pullResp.statusCode}${suffix}. ` +
+            string `Run manually: ollama pull ${model}`);
+    }
+    log:printInfo(string `Model '${model}' pulled successfully.`);
+}
+
 // ── OpenAI-compatible loop (/v1/chat/completions) ─────────────────────────────
 // Handles direct OpenAI and the WSO2 AMP AI gateway (both speak OpenAI format).
 // Arguments arrive as JSON strings and must be parsed; tool results use tool_call_id.

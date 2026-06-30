@@ -13,8 +13,35 @@ Verified on 2026-06-08, macOS (Darwin 25.5.0).
 | kubectl | ≥ 1.28 | v1.34.3 | `/Users/scottbechtel/.rd/bin/kubectl` | Rancher Desktop |
 | Helm | ≥ 3.12 | v3.19.1 | `/Users/scottbechtel/.rd/bin/helm` | Rancher Desktop |
 | Python | ≥ 3.11 | 3.14.5 | system | Agent SDK requires 3.11+ |
+| Ollama | ≥ 0.5 | — | `/usr/local/bin/ollama` (macOS app) | Required when `LLM_PROVIDER=ollama` (default) |
 
 > **Action required:** `kind` is not installed. Run `brew install kind` before starting Phase 0.3.
+
+## Ollama setup (default LLM backend)
+
+The agent defaults to `LLM_PROVIDER=ollama` — a local Ollama instance. No API key required.
+
+**Install Ollama (macOS):**
+```bash
+# Option A — native Mac app (recommended; auto-starts on login)
+# Download from https://ollama.com/download
+
+# Option B — Homebrew
+brew install ollama
+```
+
+**Pull the required model** (one-time, ~5.5 GB):
+```bash
+ollama pull qwen3.5:9b
+```
+
+**Verify:**
+```bash
+ollama list          # should show qwen3.5:9b
+curl http://localhost:11434/api/tags   # should return JSON with the model
+```
+
+> **Note:** When `LLM_PROVIDER=ollama`, both `bal test` and the agent container perform this check at startup. The test suite will fail immediately if Ollama is not running or the model is absent; the agent will auto-pull the model if it is missing (adds ~5–10 min to first startup). To skip Ollama entirely, set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` in `compose/.env`.
 
 ## Version commands (fresh-machine runbook)
 
@@ -26,6 +53,8 @@ kind version
 kubectl version --client
 helm version --short
 python3 --version
+ollama --version
+ollama list          # confirm qwen3.5:9b is present
 ```
 
 ## Install on a fresh macOS machine
@@ -43,6 +72,10 @@ brew install kind
 
 # Python 3.11+ (use pyenv or system Python)
 brew install python@3.12   # 3.14 also works
+
+# Ollama (default LLM backend — download app from https://ollama.com/download or:)
+brew install ollama
+ollama pull qwen3.5:9b
 ```
 
 ## WSO2 Agent Manager (Phase 0.3 smoke test)
