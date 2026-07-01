@@ -90,7 +90,7 @@ Build a **tool registry** backed by a semantic graph or vector index. The router
 
 ### How to Implement
 
-1. For each tool, write a rich natural-language description and embed it (e.g., using `nomic-embed-text` via Ollama on `prod.aten`).
+1. For each tool, write a rich natural-language description and embed it (e.g., using `nomic-embed-text` via Ollama).
 2. Store embeddings in a vector store (pgvector is already available in your stack).
 3. Expose a `discover_tools(query, k=5)` endpoint that performs cosine similarity search and returns the top-k tool schemas.
 4. Wire this endpoint as the single entry-point tool in the model's initial context.
@@ -159,7 +159,7 @@ Replace clusters of fine-grained tools with **higher-level abstractions**:
 
 ### Problem
 
-A single `mcp.json` that loads every registered server means a developer debugging an ACME integration also has Playwright, Figma, and database admin tools in context — irrelevant noise that costs tokens and creates risk.
+A single `mcp.json` that loads every registered server means a developer debugging an integration also has Playwright, Figma, and database admin tools in context — irrelevant noise that costs tokens and creates risk.
 
 ### Solution
 
@@ -185,7 +185,6 @@ Maintain **multiple tool-set configuration files** and select the appropriate on
   mcp.default.json     ← discovery + common utils only
   mcp.apim.json        ← APIM-scoped tools
   mcp.acme.json        ← ACME engagement toolset
-  mcp.homelab.json     ← prod.aten / dev.aten tools
 ```
 
 ### Tradeoffs

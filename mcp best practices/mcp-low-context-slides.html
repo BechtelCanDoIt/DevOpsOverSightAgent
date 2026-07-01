@@ -625,7 +625,7 @@ Turn 2: agent → <span class="fn">list_subscriptions</span>(
           <p style="margin-bottom:20px;">Keyword search is brittle. Embed each tool's description and run cosine similarity search at query time. Return only the top-k manifests.</p>
           <ol class="steps">
             <li>Write a rich natural-language description for each tool.</li>
-            <li>Embed all descriptions (e.g., <code style="font-family:var(--mono);font-size:12px;color:var(--teal)">nomic-embed-text</code> via Ollama on prod.aten).</li>
+            <li>Embed all descriptions (e.g., <code style="font-family:var(--mono);font-size:12px;color:var(--teal)">nomic-embed-text</code> via Ollama).</li>
             <li>Store embeddings in pgvector (already in stack).</li>
             <li>Expose <code style="font-family:var(--mono);font-size:12px;color:var(--teal)">discover_tools(query, k=5)</code> as the entry-point tool.</li>
             <li>Tune <code style="font-family:var(--mono);font-size:12px;color:var(--teal)">k</code> — start at 5, raise if agent needs follow-up discovery calls.</li>
