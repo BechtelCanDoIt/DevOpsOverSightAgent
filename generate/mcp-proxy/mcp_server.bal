@@ -3,7 +3,7 @@ import ballerina/http;
 listener http:Listener mcpListener = new (8290);
 
 service /health on mcpListener {
-    resource function get .() returns json => {status: "UP", 'service: "mcp-server"};
+    resource function get .() returns json => {status: "UP", 'service: "mcp-proxy"};
 }
 
 service /mcp on mcpListener {
@@ -28,8 +28,10 @@ service /mcp on mcpListener {
         } else if method == "notifications/initialized" || method == "ping" {
             resp.setJsonPayload({jsonrpc: "2.0", result: {}, id: reqId});
         } else if method == "tools/list" {
+            ensureFederation();
             resp.setJsonPayload(check buildToolsListResponse(reqId));
         } else if method == "tools/call" {
+            ensureFederation();
             json params = check body.params;
             string toolName = (check params.name).toString();
             json|error argResult = params.arguments;
@@ -46,59 +48,58 @@ service /mcp on mcpListener {
     }
 }
 
+// tools/list advertises the pre-seed set the agent loads on turn 1:
+// discover_tools + the topology tools. The federated splunk__/datadog__ tools
+// stay OUT of tools/list — they are revealed lazily via discover_tools — which
+// keeps the agent's turn-1 context small (mcp best practices Patterns 1, 2).
 function buildToolsListResponse(json? id) returns json|error {
-    json[] tools = [
-        {name: "lookup_service",
-         description: "[topology] Look up a service by name — returns owner, dependencies, runbooks, SLA, health endpoint.",
-         inputSchema: {'type: "object", properties: {name: {'type: "string"}}, required: ["name"]}},
-        {name: "get_dependencies",
-         description: "[topology] Get dependency graph. direction=downstream/upstream/both.",
-         inputSchema: {'type: "object",
-             properties: {name: {'type: "string"}, direction: {'type: "string", 'enum: ["upstream","downstream","both"]}},
-             required: ["name","direction"]}},
-        {name: "list_services",
-         description: "[topology] List all 7 mesh services.",
-         inputSchema: {'type: "object", properties: {}}},
-        {name: "get_service_health",
-         description: "[topology] Probe a service health endpoint live.",
-         inputSchema: {'type: "object", properties: {name: {'type: "string"}}, required: ["name"]}},
-        {name: "correlate_trace",
-         description: "[correlation] Given a trace_id, return Datadog URL + Splunk SPL + involved services.",
-         inputSchema: {'type: "object", properties: {trace_id: {'type: "string"}}, required: ["trace_id"]}},
-        {name: "find_recent_deploys",
-         description: "[correlation] Find recent deployments for a service.",
-         inputSchema: {'type: "object",
-             properties: {'service: {'type: "string"}, lookback_minutes: {'type: "integer"}},
-             required: ["service"]}},
-        {name: "find_related_incidents",
-         description: "[correlation] Search past incidents for a service.",
-         inputSchema: {'type: "object",
-             properties: {'service: {'type: "string"}, lookback_days: {'type: "integer"}},
-             required: ["service"]}},
-        {name: "list_runbooks",
-         description: "[runbook] List all available runbooks.",
-         inputSchema: {'type: "object", properties: {}}},
-        {name: "run_runbook",
-         description: "[runbook] Execute a runbook. Always propose to operator before calling.",
-         inputSchema: {'type: "object",
-             properties: {id: {'type: "string"}, params: {'type: "object"}},
-             required: ["id"]}},
-        {name: "get_audit_log",
-         description: "[runbook] Return the runbook execution audit log for this session.",
-         inputSchema: {'type: "object", properties: {}}},
-        {name: "get_deploy_freeze_status",
-         description: "[runbook] Check whether a deploy freeze is active and why.",
-         inputSchema: {'type: "object", properties: {}}}
-    ];
+    json[] tools = [discoverToolDef()];
+    foreach RegistryEntry e in topologyToolDefs() {
+        tools.push({name: e.name, description: e.description, inputSchema: e.inputSchema});
+    }
     return {jsonrpc: "2.0", result: {tools: tools}, id: id};
 }
 
 function buildToolCallResponse(json? id, string toolName, json arguments) returns json|error {
-    string|error content = dispatchTool(toolName, arguments);
+    if toolName == "discover_tools" {
+        string content = handleDiscover(arguments);
+        return {jsonrpc: "2.0", result: {content: [{'type: "text", text: content}], isError: false}, id: id};
+    }
+    string|error content = routeToolCall(toolName, arguments);
     if content is error {
         return {jsonrpc: "2.0", 'error: {code: -32603, message: content.message()}, id: id};
     }
     return {jsonrpc: "2.0", result: {content: [{'type: "text", text: content}], isError: false}, id: id};
+}
+
+// Route a namespaced tool call to its origin. Strips the "<origin>__" prefix:
+//   splunk__*   → Splunk MCP backend
+//   datadog__*  → Datadog MCP backend
+//   topology__* (or unprefixed) → local dispatchTool
+function routeToolCall(string toolName, json arguments) returns string|error {
+    string origin = "topology";
+    string realName = toolName;
+    int? sep = toolName.indexOf("__");
+    if sep is int {
+        origin = toolName.substring(0, sep);
+        realName = toolName.substring(sep + 2);
+    }
+    if origin == "splunk" {
+        return callBackend(getSplunkBackend(), "splunk", realName, arguments);
+    }
+    if origin == "datadog" {
+        return callBackend(getDatadogBackend(), "datadog", realName, arguments);
+    }
+    return dispatchTool(realName, arguments);
+}
+
+// Forward a de-prefixed tool call to a downstream MCP backend.
+function callBackend(http:Client? backend, string label, string realName, json args) returns string|error {
+    if backend is () {
+        return error(string `${label} MCP backend is unavailable (not connected). Retry shortly.`);
+    }
+    McpToolResult result = check mcpCallTool(backend, realName, args, 99);
+    return result.text;
 }
 
 function dispatchTool(string toolName, json arguments) returns string|error {

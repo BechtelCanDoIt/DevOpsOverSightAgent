@@ -2,7 +2,7 @@
 # ralph-tests.sh — iterative test/fix loop using the `claude` CLI (Claude Code).
 #
 # Each iteration:
-#   1. Run ./runTests.sh and capture the output (the script already auto-tails
+#   1. Run ./tests/runUnitTests.sh and capture the output (the script already auto-tails
 #      every failed log).
 #   2. If everything passes → exit 0.
 #   3. Otherwise feed the failure output to Claude Code via `claude -p` with
@@ -15,19 +15,19 @@
 #     (it's stuck — keep going burns API credits without progress)
 #
 # Requires: `claude` CLI on PATH, ANTHROPIC_API_KEY or a logged-in `claude` session,
-# and ./runTests.sh from the same repo. Operates from the repo root.
+# and ./tests/runUnitTests.sh from the same repo. Operates from the repo root.
 #
 # Usage:
-#   ./ralph-tests.sh                # up to 6 iterations
-#   MAX_ITERATIONS=10 ./ralph-tests.sh
-#   MODEL=sonnet ./ralph-tests.sh   # pass through to `claude --model`
+#   ./tests/ralph-tests.sh                # up to 6 iterations
+#   MAX_ITERATIONS=10 ./tests/ralph-tests.sh
+#   MODEL=sonnet ./tests/ralph-tests.sh   # pass through to `claude --model`
 #
 # Logs of each iteration land under .ralph-logs/<timestamp>/ for after-the-fact
-# review. Test infra teardown is handled by runTests.sh's own EXIT trap.
+# review. Test infra teardown is handled by runUnitTests.sh's own EXIT trap.
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 MAX_ITERATIONS="${MAX_ITERATIONS:-6}"
@@ -43,8 +43,8 @@ if ! command -v claude >/dev/null 2>&1; then
   echo "       and run 'claude login' (or export ANTHROPIC_API_KEY) before retrying." >&2
   exit 2
 fi
-if [ ! -x ./runTests.sh ]; then
-  echo "ERROR: ./runTests.sh not found or not executable." >&2
+if [ ! -x ./tests/runUnitTests.sh ]; then
+  echo "ERROR: ./tests/runUnitTests.sh not found or not executable." >&2
   exit 2
 fi
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -86,7 +86,7 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   RUN_LOG="$LOG_DIR/run-$i.log"
 
   # Run the test suite. Tee so the user sees live output too.
-  ./runTests.sh 2>&1 | tee "$RUN_LOG"
+  ./tests/runUnitTests.sh 2>&1 | tee "$RUN_LOG"
   rc=${PIPESTATUS[0]}
 
   if [ "$rc" -eq 0 ]; then
@@ -107,12 +107,12 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   echo
   echo "── Iteration $i failed. Handing the failure log to Claude Code ──"
 
-  # Compose the prompt. runTests.sh already prints the last 30 lines of each
+  # Compose the prompt. runUnitTests.sh already prints the last 30 lines of each
   # failed service log at the end of its output, so $RUN_LOG is sufficient.
   PROMPT_FILE="$LOG_DIR/prompt-$i.md"
   cat > "$PROMPT_FILE" <<'PROMPT_HEADER'
 You are inside the DevOpsOverSightAgent repo (see CLAUDE.md for project context). The
-test runner `./runTests.sh` was just invoked and one or more Ballerina unit
+test runner `./tests/runUnitTests.sh` was just invoked and one or more Ballerina unit
 test suites failed. The full output is below.
 
 Your job: diagnose every failing service and fix the underlying bugs in the
@@ -136,7 +136,7 @@ When you have applied your fixes, end with a one-paragraph summary of (a)
 which file(s) you changed, and (b) the reasoning for each change. Then stop —
 the outer loop will re-run the tests.
 
------ ./runTests.sh output -----
+----- ./tests/runUnitTests.sh output -----
 PROMPT_HEADER
   cat "$RUN_LOG" >> "$PROMPT_FILE"
 

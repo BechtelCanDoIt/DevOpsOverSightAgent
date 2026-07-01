@@ -1,10 +1,11 @@
 import ballerina/http;
+import ballerina/lang.value;
 import ballerina/log;
 
 // ── Config — read from Config.toml; env vars override via envOrCfg ────────────
-configurable string splunkMcpUrl = "http://splunk-mock-mcp:8400";
-configurable string datadogMcpUrl = "http://datadog-mock-mcp:8401";
-configurable string ballerinaTopologyMcpUrl = "http://mcp-server:8290";
+// The agent connects to ONE MCP server: the MCP Proxy. The proxy federates the
+// Splunk / Datadog backends — the agent no longer opens clients to them.
+configurable string ballerinaTopologyMcpUrl = "http://mcp-proxy:8290";
 
 isolated function envOrCfg(string envKey, string fallback) returns string {
     string v = envOr(envKey, "");
@@ -90,209 +91,92 @@ service /webhook on agentListener {
 }
 
 // ── Lazy tool loading ─────────────────────────────────────────────────────────
-// Topology tools are pre-seeded in every context (bounded, custom, always needed).
-// Splunk and Datadog tools are loaded on demand via discover_tools — this keeps
-// context small now and scales cleanly when the real vendor MCPs (50+ tools each)
-// replace the mocks.
+// The MCP Proxy owns federation now. On turn 1 the agent seeds only what the
+// proxy advertises in tools/list: discover_tools + the topology tools. Splunk
+// and Datadog tools are revealed by calling the proxy's discover_tools, whose
+// result carries their manifests — absorbDiscovered() folds them into the
+// live activeTools set so the LLM can call them on the next turn.
 
-final AnthropicTool DISCOVER_TOOL = {
-    name: "discover_tools",
-    description: "Search for tools by capability and add their schemas to your context. Call this before using any Splunk or Datadog tool. Examples: \"Splunk log query\", \"Datadog metric trace APM\", \"Datadog monitor error tracking\".",
-    input_schema: {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Natural language description of the capability needed (e.g. \"Splunk logs query\", \"Datadog metric time series\", \"Datadog trace APM spans\")"
-            }
-        },
-        "required": ["query"]
+// Fold a discover_tools result into activeTools. The proxy returns either a
+// guidance string (empty/no-match) — passed through unchanged — or a JSON
+// bundle {"tools":[{name,description,input_schema},...]} which we absorb.
+// activeTools is a reference — push() here is visible to the LLM loop.
+function absorbDiscovered(string resultText, AnthropicTool[] activeTools) returns string {
+    json|error parsed = value:fromJsonString(resultText);
+    if parsed is error {
+        return resultText; // guidance text, not a manifest bundle
     }
-};
-
-// Score how well a tool matches a query. Words > 2 chars: exact match = +2,
-// 4-char prefix match (handles plurals/stems) = +1 for words length >= 5.
-isolated function scoreToolMatch(string name, string description, string query) returns int {
-    string haystack = string `${name} ${description}`.toLowerAscii();
-    int score = 0;
-    string remaining = query.toLowerAscii();
-    while remaining.length() > 0 {
-        int? spaceIdx = remaining.indexOf(" ");
-        string word;
-        if spaceIdx is int {
-            word = remaining.substring(0, spaceIdx);
-            remaining = remaining.substring(spaceIdx + 1);
-        } else {
-            word = remaining;
-            remaining = "";
-        }
-        if word.length() <= 2 {
+    json|error toolsField = parsed.tools;
+    if !(toolsField is json[]) {
+        return resultText;
+    }
+    json[] discovered = toolsField;
+    if discovered.length() == 0 {
+        return resultText;
+    }
+    string resultMsg = "";
+    int idx = 0;
+    foreach json t in discovered {
+        AnthropicTool|error tool = t.cloneWithType(AnthropicTool);
+        if tool is error {
             continue;
         }
-        if haystack.includes(word) {
-            score += 2;
-        } else if word.length() >= 5 && haystack.includes(word.substring(0, 4)) {
-            score += 1;
-        }
-    }
-    return score;
-}
-
-// Return up to maxResults tools from registry ranked by query relevance.
-// Returns empty array when nothing scores > 0.
-function searchRegistry(map<AnthropicTool> registry, string query, int maxResults) returns AnthropicTool[] {
-    [string, int][] scored = [];
-    foreach string k in registry.keys() {
-        AnthropicTool t = registry.get(k);
-        int s = scoreToolMatch(t.name, t.description, query);
-        if s > 0 {
-            scored.push([k, s]);
-        }
-    }
-    // Selection sort descending by score (N <= 21, cost is negligible)
-    int sz = scored.length();
-    int ii = 0;
-    while ii < sz - 1 {
-        int bestIdx = ii;
-        int jj = ii + 1;
-        while jj < sz {
-            if scored[jj][1] > scored[bestIdx][1] {
-                bestIdx = jj;
+        boolean alreadyActive = false;
+        foreach AnthropicTool existing in activeTools {
+            if existing.name == tool.name {
+                alreadyActive = true;
+                break;
             }
-            jj += 1;
         }
-        if bestIdx != ii {
-            [string, int] tmp = scored[ii];
-            scored[ii] = scored[bestIdx];
-            scored[bestIdx] = tmp;
+        if !alreadyActive {
+            activeTools.push(tool);
         }
-        ii += 1;
-    }
-    AnthropicTool[] result = [];
-    int lim = scored.length() < maxResults ? scored.length() : maxResults;
-    int idx = 0;
-    while idx < lim {
-        result.push(registry.get(scored[idx][0]));
+        if idx > 0 {
+            resultMsg += "\n";
+        }
+        resultMsg += string `• ${tool.name}: ${tool.description}`;
         idx += 1;
     }
-    return result;
+    return string `Loaded ${discovered.length()} tool(s) — now callable:\n${resultMsg}`;
 }
 
 // ── MCP initialisation ────────────────────────────────────────────────────────
 
-// Connect to all 3 MCP servers and fetch their tool lists once.
-// Returns: splunkMcp, datadogMcp, topologyMcp, full registry, topology tools (pre-seeded).
-function initMcp() returns [http:Client, http:Client, http:Client, map<AnthropicTool>, AnthropicTool[]]|error {
-    string resolvedSplunkUrl = envOrCfg("SPLUNK_MCP_URL", splunkMcpUrl);
-    string resolvedDatadogUrl = envOrCfg("DATADOG_MCP_URL", datadogMcpUrl);
-    string resolvedTopologyUrl = envOrCfg("BALLERINA_TOPOLOGY_MCP_URL", ballerinaTopologyMcpUrl);
+// Connect to the MCP Proxy and fetch its pre-seed tool list once.
+// Returns: the proxy client + the seed tools (discover_tools + topology tools).
+function initMcp() returns [http:Client, AnthropicTool[]]|error {
+    string resolvedProxyUrl = envOrCfg("BALLERINA_TOPOLOGY_MCP_URL", ballerinaTopologyMcpUrl);
+    http:Client proxyMcp = check new (resolvedProxyUrl, timeout = 30);
 
-    http:Client splunkMcp = check new (resolvedSplunkUrl, timeout = 30);
-    http:Client datadogMcp = check new (resolvedDatadogUrl, timeout = 30);
-    http:Client topologyMcp = check new (resolvedTopologyUrl, timeout = 30);
+    error? proxyInit = mcpInitialize(proxyMcp);
+    if proxyInit is error { log:printWarn("MCP Proxy init failed", 'error = proxyInit); }
 
-    error? splunkInit = mcpInitialize(splunkMcp);
-    error? ddInit = mcpInitialize(datadogMcp);
-    error? topInit = mcpInitialize(topologyMcp);
-
-    if splunkInit is error { log:printWarn("Splunk MCP init failed", 'error = splunkInit); }
-    if ddInit is error { log:printWarn("Datadog MCP init failed", 'error = ddInit); }
-    if topInit is error { log:printWarn("Topology MCP init failed", 'error = topInit); }
-
-    map<AnthropicTool> registry = {};
-    AnthropicTool[] topologyTools = [];
-
-    if splunkInit !is error {
-        McpToolDef[]|error splunkTools = mcpListTools(splunkMcp);
-        if splunkTools is McpToolDef[] {
-            foreach McpToolDef t in splunkTools {
-                string n = string `splunk__${t.name}`;
-                registry[n] = {name: n, description: string `[splunk] ${t.description}`, input_schema: t.inputSchema};
-            }
+    AnthropicTool[] seedTools = [];
+    McpToolDef[]|error tools = mcpListTools(proxyMcp);
+    if tools is McpToolDef[] {
+        foreach McpToolDef t in tools {
+            // The proxy already namespaces and tags names/descriptions.
+            seedTools.push({name: t.name, description: t.description, input_schema: t.inputSchema});
         }
+    } else {
+        log:printWarn("MCP Proxy tools/list failed — agent has no tools", 'error = tools);
     }
-    if ddInit !is error {
-        McpToolDef[]|error ddTools = mcpListTools(datadogMcp);
-        if ddTools is McpToolDef[] {
-            foreach McpToolDef t in ddTools {
-                string n = string `datadog__${t.name}`;
-                registry[n] = {name: n, description: string `[datadog] ${t.description}`, input_schema: t.inputSchema};
-            }
-        }
-    }
-    if topInit !is error {
-        McpToolDef[]|error topTools = mcpListTools(topologyMcp);
-        if topTools is McpToolDef[] {
-            foreach McpToolDef t in topTools {
-                string n = string `topology__${t.name}`;
-                AnthropicTool tool = {name: n, description: string `[topology] ${t.description}`, input_schema: t.inputSchema};
-                registry[n] = tool;
-                topologyTools.push(tool);
-            }
-        }
-    }
-    return [splunkMcp, datadogMcp, topologyMcp, registry, topologyTools];
+    return [proxyMcp, seedTools];
 }
 
-// Build a dispatcher closure. Routes discover_tools calls (expands activeTools in place)
-// and real tool calls to the correct MCP client.
-// activeTools is a reference — push() inside the closure is visible to the caller.
+// Build a dispatcher closure. Every tool call is forwarded to the proxy, which
+// routes it to the right backend. discover_tools results are absorbed into the
+// live activeTools set. activeTools is a reference — push() is visible upstream.
 function makeDispatcher(
     AnthropicTool[] activeTools,
-    map<AnthropicTool> registry,
-    http:Client splunkMcp,
-    http:Client datadogMcp,
-    http:Client topologyMcp
+    http:Client proxyMcp
 ) returns function (string, json) returns string {
     return function(string toolName, json args) returns string {
-        if toolName == "discover_tools" {
-            json|error queryField = args.query;
-            string query = queryField is json ? queryField.toString() : "";
-            if query == "" {
-                return "Provide a non-empty query, e.g. \"Splunk logs\", \"Datadog metric trace\", \"topology runbook\".";
-            }
-            AnthropicTool[] found = searchRegistry(registry, query, 5);
-            if found.length() == 0 {
-                return string `No tools matched "${query}". Try: "Splunk logs query", "Datadog metric trace APM monitor", or "topology service dependency runbook correlate".`;
-            }
-            string resultMsg = "";
-            int idx = 0;
-            foreach AnthropicTool t in found {
-                boolean alreadyActive = false;
-                foreach AnthropicTool existing in activeTools {
-                    if existing.name == t.name {
-                        alreadyActive = true;
-                        break;
-                    }
-                }
-                if !alreadyActive {
-                    activeTools.push(t);
-                }
-                if idx > 0 {
-                    resultMsg += "\n";
-                }
-                resultMsg += string `• ${t.name}: ${t.description}`;
-                idx += 1;
-            }
-            return string `Loaded ${found.length()} tool(s) — now callable:\n${resultMsg}`;
-        }
-
-        // Route by real tool name (strip "<prefix>__"). Robust to wrong namespace prefix.
-        string realName = toolName;
-        int? sep = toolName.indexOf("__");
-        if sep is int {
-            realName = toolName.substring(sep + 2);
-        }
-        http:Client targetClient;
-        if realName.startsWith("splunk_") {
-            targetClient = splunkMcp;
-        } else if realName.includes("datadog") || realName.startsWith("apm_") {
-            targetClient = datadogMcp;
-        } else {
-            targetClient = topologyMcp;
-        }
-        McpToolResult|error result = mcpCallTool(targetClient, realName, args, 99);
+        McpToolResult|error result = mcpCallTool(proxyMcp, toolName, args, 99);
         if result is error { return string `Tool error: ${result.message()}`; }
+        if toolName == "discover_tools" {
+            return absorbDiscovered(result.text, activeTools);
+        }
         return result.text;
     };
 }
@@ -300,22 +184,13 @@ function makeDispatcher(
 // ── Core chat function ────────────────────────────────────────────────────────
 
 function chat(string userMessage) returns string|error {
-    [http:Client, http:Client, http:Client, map<AnthropicTool>, AnthropicTool[]] mcpInit = check initMcp();
-    http:Client splunkMcp = mcpInit[0];
-    http:Client datadogMcp = mcpInit[1];
-    http:Client topologyMcp = mcpInit[2];
-    map<AnthropicTool> registry = mcpInit[3];
-    AnthropicTool[] topologyTools = mcpInit[4];
+    [http:Client, AnthropicTool[]] mcpInit = check initMcp();
+    http:Client proxyMcp = mcpInit[0];
+    // Seed set from the proxy: discover_tools + topology tools. Splunk and
+    // Datadog tools are added dynamically via discover_tools.
+    AnthropicTool[] activeTools = mcpInit[1];
 
-    // Seed: discover_tools + all topology tools (bounded, always needed).
-    // Splunk and Datadog tools are added dynamically via discover_tools.
-    AnthropicTool[] activeTools = [DISCOVER_TOOL];
-    foreach AnthropicTool t in topologyTools {
-        activeTools.push(t);
-    }
-
-    function (string, json) returns string dispatcher =
-        makeDispatcher(activeTools, registry, splunkMcp, datadogMcp, topologyMcp);
+    function (string, json) returns string dispatcher = makeDispatcher(activeTools, proxyMcp);
     return check runConfiguredLlm(SYSTEM_PROMPT, userMessage, activeTools, dispatcher, 30);
 }
 
@@ -324,20 +199,11 @@ function chat(string userMessage) returns string|error {
 function investigate(AlertRequest alert) returns string|error {
     log:printInfo("starting investigation", 'service = alert.'service, severity = alert.severity);
 
-    [http:Client, http:Client, http:Client, map<AnthropicTool>, AnthropicTool[]] mcpInit = check initMcp();
-    http:Client splunkMcp = mcpInit[0];
-    http:Client datadogMcp = mcpInit[1];
-    http:Client topologyMcp = mcpInit[2];
-    map<AnthropicTool> registry = mcpInit[3];
-    AnthropicTool[] topologyTools = mcpInit[4];
+    [http:Client, AnthropicTool[]] mcpInit = check initMcp();
+    http:Client proxyMcp = mcpInit[0];
+    AnthropicTool[] activeTools = mcpInit[1];
 
-    AnthropicTool[] activeTools = [DISCOVER_TOOL];
-    foreach AnthropicTool t in topologyTools {
-        activeTools.push(t);
-    }
-
-    function (string, json) returns string dispatcher =
-        makeDispatcher(activeTools, registry, splunkMcp, datadogMcp, topologyMcp);
+    function (string, json) returns string dispatcher = makeDispatcher(activeTools, proxyMcp);
     string userPrompt = buildInvestigationPrompt(alert.'service, alert.severity, alert.description, alert.id);
     string summary = check runConfiguredLlm(SYSTEM_PROMPT, userPrompt, activeTools, dispatcher, 30);
     log:printInfo("investigation complete", 'service = alert.'service);

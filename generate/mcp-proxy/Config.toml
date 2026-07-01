@@ -1,6 +1,11 @@
 # Ballerina runtime config. Defaults target the compose network.
 # For local `bal run`, override [ballerinax.jaeger] agentHostname or run without collector.
 
+# MCP backend URLs — swap for real SaaS MCPs without touching code.
+# Override at runtime with SPLUNK_MCP_URL / DATADOG_MCP_URL env vars (env wins).
+splunkMcpUrl  = "http://splunk-mock-mcp:8400"
+datadogMcpUrl = "http://datadog-mock-mcp:8401"
+
 [ballerina.log]
 format = "json"
 

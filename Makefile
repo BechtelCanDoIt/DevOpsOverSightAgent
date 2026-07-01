@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 
 COMPOSE_FILE := compose/docker-compose.yml
-BAL_PACKAGES  := order payment inventory customer store invoice notification load-gen mcp-server splunk-mock-mcp datadog-mock-mcp agent
+BAL_PACKAGES  := order payment inventory customer store invoice notification load-gen mcp-proxy splunk-mock-mcp datadog-mock-mcp agent
 
-.PHONY: help demo-up demo-mock-up demo-down inject-chaos reset-chaos rehearse test-bal test-all mcp-inspect investigate
+.PHONY: help demo-up demo-mock-up demo-down inject-chaos reset-chaos rehearse test-bal test-all mcp-inspect investigate test-proxy
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -15,7 +15,7 @@ demo-up: ## Start the full stack (real Splunk/Datadog exporters — needs .env c
 
 demo-mock-up: ## Start stack with mock MCPs (no creds needed — good for local dev)
 	@echo "==> Building Ballerina images sequentially (avoids JVM OOM with parallel builds)..."
-	@for svc in store customer order inventory invoice payment notification load-gen mcp-server splunk-mock-mcp datadog-mock-mcp devops-oversight-agent; do \
+	@for svc in store customer order inventory invoice payment notification load-gen mcp-proxy splunk-mock-mcp datadog-mock-mcp devops-oversight-agent; do \
 		echo "  -- building $$svc"; \
 		docker compose -f $(COMPOSE_FILE) --profile mock build $$svc || exit 1; \
 	done
@@ -59,13 +59,16 @@ test-bal: ## Run bal test for all Ballerina packages
 
 test-all: test-bal ## Alias for test-bal
 
-mcp-inspect: ## Launch MCP Inspector against the Ballerina MCP server (requires: mcp-server running)
+mcp-inspect: ## Launch MCP Inspector against the MCP Proxy (requires: mcp-proxy running)
 	@echo "==> MCP Inspector starting. When the browser opens:"
 	@echo "    1. Transport:  Streamable HTTP"
 	@echo "    2. URL:        http://127.0.0.1:8290/mcp   <-- use 127.0.0.1, NOT localhost"
 	@echo "    3. Click Connect, then browse Tools and call them."
 	@echo "    (Node.js resolves 'localhost' to ::1/IPv6 which Docker does not forward)"
 	npx @modelcontextprotocol/inspector
+
+test-proxy: ## Integration test: proxy federation + routing (no LLM or SaaS creds needed)
+	bash tests/test-docker-configuration.sh
 
 investigate: ## Trigger a test investigation against payment-service (requires: demo-mock-up + ANTHROPIC_API_KEY in .env)
 	curl -s -X POST http://localhost:8092/investigate \

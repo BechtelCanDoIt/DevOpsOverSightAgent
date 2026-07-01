@@ -4,7 +4,7 @@ COPY --chown=ballerina:ballerina . .
 RUN bal build
 
 FROM ballerina/ballerina:2201.13.3
-WORKDIR /home/ballerina
+WORKDIR /app
 COPY --from=build /home/ballerina/app/target/bin/datadog_mock_mcp.jar app.jar
 COPY --from=build /home/ballerina/app/Config.toml Config.toml
 EXPOSE 8401

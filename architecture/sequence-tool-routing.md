@@ -1,101 +1,97 @@
-# Sequence Diagram — Tool Routing Detail: discover_tools → Registry → MCP Dispatch
+# Sequence Diagram — Tool Routing Detail: Inside the MCP Proxy
+
+This drills into the proxy: how `discover_tools` searches the server-side
+registry, how `absorbDiscovered` folds the returned manifests into the agent's
+context, and how namespaced calls are prefix-routed to the backends.
 
 Paste the Mermaid block below into [mermaid.live](https://mermaid.live) or any compatible renderer.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant LLM as LLM (Anthropic/Ollama)
-    participant AgentLoop as Agent Tool AgentLoop<br/>(runConfiguredLlm)
-    participant Dispatcher as makeDispatcher closure
-    participant Registry as Tool Registry<br/>(name to AnthropicTool)
-    participant SplunkMCP as Splunk Mock MCP<br/>:8400
-    participant DatadogMCP as Datadog Mock MCP<br/>:8401
-    participant TopologyMCP as MCP Proxy<br/>:8290
+    participant AgentLoop as Agent Tool Loop<br/>(runConfiguredLlm + makeDispatcher)
+    participant Proxy as MCP Proxy service<br/>/mcp :8290
+    participant Registry as Registry<br/>(name to RegistryEntry)
+    participant SplunkMCP as Splunk MCP<br/>:8400
+    participant DatadogMCP as Datadog MCP<br/>:8401
 
-    Note over AgentLoop,Registry: Session start — initMcp() populates registry<br/>splunk__*(4) + datadog__*(8) + topology__*(11) = 23 tools<br/>activeTools = [discover_tools] + topology__*(11) only
+    Note over Proxy,DatadogMCP: ensureFederation() (once, lazy)<br/>registers topology__(11) + splunk__(4) + datadog__(8)
 
-    LLM->>AgentLoop: tool_use { name: "discover_tools",<br/>input: { query: "Splunk 502 errors logs" } }
-    AgentLoop->>Dispatcher: dispatch("discover_tools", { query: … })
+    Proxy->>SplunkMCP: initialize + tools/list
+    SplunkMCP-->>Proxy: splunk_* tools
+    Proxy->>Registry: registerTool(splunk__* namespaced)
+    Proxy->>DatadogMCP: initialize + tools/list
+    DatadogMCP-->>Proxy: datadog_*/apm_* tools
+    Proxy->>Registry: registerTool(datadog__* namespaced)
 
-    Note over Dispatcher,Registry: searchRegistry(registry, query, maxResults=5)
+    Note over AgentLoop: LLM emits tool_use discover_tools { query: "Splunk 502 errors logs" }
 
-    loop for each tool in registry (23 tools)
-        Dispatcher->>Registry: scoreToolMatch(name, description, query)
-        Note over Registry: tokenize query → score words:<br/>exact match in name+desc = +2<br/>4-char prefix (word ≥5 chars) = +1
-        Registry-->>Dispatcher: score
+    AgentLoop->>Proxy: tools/call discover_tools
+    Proxy->>Proxy: handleDiscover — snapshotRegistry()
+    loop each entry in registry
+        Proxy->>Registry: scoreToolMatch(name, description, query)
+        Note over Registry: exact word = +2<br/>4-char prefix (word len 5+) = +1
+        Registry-->>Proxy: score
     end
+    Proxy->>Proxy: selection sort desc, take top-5
+    Proxy-->>AgentLoop: { tools: [ splunk__splunk_run_query, splunk__splunk_get_indexes, … ] }
+    AgentLoop->>AgentLoop: absorbDiscovered — push manifests into activeTools
+    Note over AgentLoop: LLM now sees splunk__* schemas next turn
 
-    Dispatcher->>Dispatcher: selection sort descending by score
-    Dispatcher->>Dispatcher: top-5 tools: splunk__splunk_run_query (+6),<br/>splunk__splunk_get_indexes (+4), …
+    Note over AgentLoop: LLM emits tool_use splunk__splunk_run_query { query: "error status=502" }
 
-    loop for each matched tool
-        Dispatcher->>AgentLoop: activeTools.push(tool schema)<br/>(skip if already present)
-    end
+    AgentLoop->>Proxy: tools/call splunk__splunk_run_query
+    Proxy->>Proxy: routeToolCall — split on "__"<br/>origin=splunk, realName=splunk_run_query
+    Proxy->>SplunkMCP: tools/call splunk_run_query (de-prefixed)
+    SplunkMCP-->>Proxy: log events JSON
+    Proxy-->>AgentLoop: log events JSON
 
-    Dispatcher-->>AgentLoop: Loaded 4 tools — now callable: splunk__splunk_run_query …
-    AgentLoop-->>LLM: tool_result { content: "Loaded 4 tool(s)…" }<br/>+ updated activeTools injected into next LLM call
+    Note over AgentLoop: LLM discovers Datadog tools, then calls datadog__get_datadog_trace
 
-    Note over LLM: LLM now sees splunk__* schemas in tools list
+    AgentLoop->>Proxy: tools/call datadog__get_datadog_trace { trace_id: "abc123" }
+    Proxy->>Proxy: routeToolCall — origin=datadog, realName=get_datadog_trace
+    Proxy->>DatadogMCP: tools/call get_datadog_trace (de-prefixed)
+    DatadogMCP-->>Proxy: trace spans JSON
+    Proxy-->>AgentLoop: trace spans JSON
 
-    LLM->>AgentLoop: tool_use { name: "splunk__splunk_run_query",<br/>input: { query: "error status=502", earliest: "-1h" } }
-    AgentLoop->>Dispatcher: dispatch("splunk__splunk_run_query", { … })
+    Note over AgentLoop: topology tools were pre-seeded — no discover_tools needed
 
-    Note over Dispatcher: Route decision:<br/>strip "__" prefix → realName = "splunk_run_query"<br/>realName.startsWith("splunk_") → target = splunkMcp
-
-    Dispatcher->>SplunkMCP: POST /mcp<br/>{ method: "tools/call",<br/>  params: { name: "splunk_run_query", arguments: {…} } }
-    SplunkMCP-->>Dispatcher: { result: { content: [{ type:"text", text: "…" }] } }
-    Dispatcher-->>AgentLoop: result.text (verbatim)
-    AgentLoop-->>LLM: tool_result { content: "log events…" }
-
-    Note over LLM: LLM reasons — calls discover_tools again for Datadog
-
-    LLM->>AgentLoop: tool_use { name: "discover_tools",<br/>input: { query: "Datadog trace APM spans" } }
-    AgentLoop->>Dispatcher: dispatch("discover_tools", { query: … })
-    Dispatcher->>Registry: searchRegistry — scores datadog__*/apm_* higher
-    Note over Registry: "datadog" exact match (+2), "trace" exact match (+2),<br/>"apm" exact match (+2) → datadog__get_datadog_trace scores highest
-    Dispatcher-->>AgentLoop: activeTools.push(datadog__* schemas)
-    AgentLoop-->>LLM: tool_result "Loaded 3 tool(s)…"
-
-    LLM->>AgentLoop: tool_use { name: "datadog__get_datadog_trace",<br/>input: { trace_id: "abc123" } }
-    AgentLoop->>Dispatcher: dispatch("datadog__get_datadog_trace", { … })
-
-    Note over Dispatcher: realName = "get_datadog_trace"<br/>realName.includes("datadog") → target = datadogMcp
-
-    Dispatcher->>DatadogMCP: POST /mcp<br/>{ method: "tools/call",<br/>  params: { name: "get_datadog_trace", arguments: {…} } }
-    DatadogMCP-->>Dispatcher: trace spans JSON
-    Dispatcher-->>AgentLoop: result.text
-    AgentLoop-->>LLM: tool_result { content: "trace spans…" }
-
-    Note over LLM: Topology tools already in activeTools — no discover_tools needed
-
-    LLM->>AgentLoop: tool_use { name: "topology__correlate_trace",<br/>input: { trace_id: "abc123" } }
-    AgentLoop->>Dispatcher: dispatch("topology__correlate_trace", { … })
-
-    Note over Dispatcher: realName = "correlate_trace"<br/>not splunk_* / not datadog / not apm_* → target = topologyMcp
-
-    Dispatcher->>TopologyMCP: POST /mcp<br/>{ method: "tools/call",<br/>  params: { name: "correlate_trace", arguments: {…} } }
-    TopologyMCP-->>Dispatcher: { datadog_url, splunk_spl, involved_services }
-    Dispatcher-->>AgentLoop: result.text
-    AgentLoop-->>LLM: tool_result { content: "…" }
+    AgentLoop->>Proxy: tools/call topology__correlate_trace { trace_id: "abc123" }
+    Proxy->>Proxy: routeToolCall — origin=topology, realName=correlate_trace<br/>NOT splunk/datadog → local dispatchTool
+    Proxy-->>AgentLoop: { datadog_url, splunk_spl, involved_services }
 ```
 
 ## Routing decision table
 
-The dispatcher strips the `__` namespace prefix to get `realName`, then applies these rules in order:
+`routeToolCall` splits the tool name on `__` to get `origin` + `realName`, then:
 
-| Condition on `realName` | Target client | Example tool |
-|------------------------|---------------|--------------|
-| `startsWith("splunk_")` | `splunkMcp :8400` | `splunk_run_query` |
-| `includes("datadog")` OR `startsWith("apm_")` | `datadogMcp :8401` | `get_datadog_trace`, `apm_search_spans` |
-| anything else | `topologyMcp :8290` | `correlate_trace`, `run_runbook` |
+| origin (prefix) | Target | Example call | Forwarded as |
+|-----------------|--------|--------------|--------------|
+| `splunk` | Splunk MCP `:8400` | `splunk__splunk_run_query` | `splunk_run_query` |
+| `datadog` | Datadog MCP `:8401` | `datadog__get_datadog_trace` | `get_datadog_trace` |
+| `topology` | local `dispatchTool` | `topology__correlate_trace` | `correlate_trace` |
+
+## Where each responsibility lives
+
+| Responsibility | Location | Function |
+|----------------|----------|----------|
+| Connect to backends, namespace their tools | Proxy | `ensureFederation` / `connectBackend` |
+| Hold the searchable tool registry | Proxy | `toolRegistry` (isolated + lock) |
+| Score + rank tools for a query | Proxy | `scoreToolMatch` / `searchRegistry` |
+| Answer `discover_tools` | Proxy | `handleDiscover` |
+| Strip prefix + route the call | Proxy | `routeToolCall` / `callBackend` |
+| Fold discovered manifests into LLM context | Agent | `absorbDiscovered` |
+| Seed turn-1 tools + run the LLM loop | Agent | `initMcp` / `makeDispatcher` |
 
 ## Keyword scorer details
 
-`scoreToolMatch(name, description, query)` concatenates `name + description`, lowercases both, then tokenizes the query:
+`scoreToolMatch(name, description, query)` concatenates `name + description`,
+lowercases both, then tokenizes the query:
 
 - Words ≤ 2 chars: **skip** (stop words)
 - Exact word present in haystack: **+2**
 - Word ≥ 5 chars AND its 4-char prefix present: **+1** (handles plurals/stems, e.g. "errors" matches "error")
 
-Tools with score = 0 are excluded. Top-5 by score are added to `activeTools`. This is an intentional choice over pgvector for ~21 tools in a POC — no embedding infrastructure required.
+Tools scoring 0 are excluded; the top-5 by score are returned. This is a
+deliberate stand-in for pgvector at ~23 tools (11 topology + 4 splunk + 8 datadog with mock
+backends) — no embedding infrastructure required for the POC.

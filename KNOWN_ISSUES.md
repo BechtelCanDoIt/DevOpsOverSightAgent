@@ -9,7 +9,7 @@
 1. Check container status: `docker compose ps devops-oversight-agent`
 2. If unhealthy, check logs: `docker compose logs devops-oversight-agent`
 3. If build failed on `ANTHROPIC_API_KEY not set`, you hit the stale-jar VOLUME bug; rebuild with `docker compose build --no-cache devops-oversight-agent`
-4. If network unreachable, the agent may be waiting for an MCP server to initialize — check that mcp-server, splunk-mock-mcp, and datadog-mock-mcp are UP
+4. If network unreachable, the agent may be waiting for an MCP server to initialize — check that mcp-proxy, splunk-mock-mcp, and datadog-mock-mcp are UP
 
 ### Investigation returns "Investigation incomplete — max turns reached"
 **Symptom:** `make investigate` returns `{"status":"investigated","summary":"Investigation incomplete — max turns reached."}`.

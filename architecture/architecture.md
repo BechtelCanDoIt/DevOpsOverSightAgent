@@ -47,7 +47,7 @@ and the mesh's own topology service as MCP tool surfaces.
 │   │     OTel: ballerinax/jaeger (OTLP gRPC) + ballerinax/prometheus              │   │
 │   │     LLM: Ollama (default, creds-free) | Anthropic | OpenAI | AMP             │   │
 │   │     └── single MCP client ──► MCP Proxy (:8290)                              │   │
-│   │  (mcp_client.bal)              src: generate/mcp-server/                     │   │
+│   │  (mcp_client.bal)              src: generate/mcp-proxy/                     │   │
 │   └──────────────────────────────────────────────────────────────────────────────┘   │
 │                      │ (optional) WSO2 API Manager MCP Gateway: auth, rate-limit, audit│
 └──────────────────────┼─────────────────────────────────────────────────────────────────┘
@@ -55,7 +55,7 @@ and the mesh's own topology service as MCP tool surfaces.
 ┌──────────────────────┼─────────────────────────────────────────────────────────────────┐
 │  DOCKER COMPOSE  (bridge network: devops-poc)  —  Workload + observability tier        │
 │                       ▼                                                                 │
-│   MCP Proxy (Streamable HTTP, :8290)   src: generate/mcp-server/                       │
+│   MCP Proxy (Streamable HTTP, :8290)   src: generate/mcp-proxy/                       │
 │   ├── topology/correlation/runbook tools  (local, owns service catalog)                │
 │   ├── routes Splunk calls  ──► splunk-mock-mcp (:8400)  [or real Splunk MCP via env]   │
 │   └── routes Datadog calls ──► datadog-mock-mcp (:8401) [or real Datadog MCP via env]  │
@@ -204,7 +204,7 @@ The agent connects to a **single MCP Proxy** (`:8290`). The proxy owns the servi
 
 | Component | Origin | Hosting / transport | Key tools | Config |
 |-----------|--------|---------------------|-----------|--------|
-| **MCP Proxy** | Custom (this repo) | **Host-local** in Compose, Streamable HTTP `:8290` | topology / correlation / runbooks (catalog below) + proxied Splunk/Datadog tools | `generate/mcp-server/`; client `generate/agent/mcp_client.bal` |
+| **MCP Proxy** | Custom (this repo) | **Host-local** in Compose, Streamable HTTP `:8290` | topology / correlation / runbooks (catalog below) + proxied Splunk/Datadog tools | `generate/mcp-proxy/`; client `generate/agent/mcp_client.bal` |
 | **Splunk MCP** | Official — *MCP Server for Splunk platform* (Splunkbase 7931) | App on **your Splunk Cloud**; Streamable HTTP; MCP bearer token (RBAC `mcp_tool_execute`). Default: `splunk-mock-mcp :8400` | `splunk_run_query` (SPL), `splunk_get_indexes`, `splunk_get_knowledge_objects` | env `SPLUNK_MCP_URL` on the proxy |
 | **Datadog MCP** | Official — *Datadog MCP Server* (Bits AI) | **Remote-hosted** `mcp.datadoghq.com` (regional per `DD_SITE`). Default: `datadog-mock-mcp :8401` | `get_datadog_metric`, `search_datadog_error_tracking_issues`, `get_datadog_trace`, `search_datadog_logs`, `search_datadog_monitors` | env `DATADOG_MCP_URL` on the proxy |
 
@@ -214,19 +214,24 @@ because it is Ballerina it can also *act* (hit chaos endpoints, restart containe
 
 ### MCP Proxy tool catalog
 
-| Group | Tool | Inputs | Returns |
-|-------|------|--------|---------|
-| **Lookup / topology** | `lookup_service` | `name` | `{ owner, repo, runbook_ids, sla, health_endpoint, dependencies }` |
-| | `get_dependencies` | `name`, `direction` (`upstream`/`downstream`/`both`) | Adjacency list — must match the §3 topology exactly |
-| | `list_services` | (none) | All known services + `last_seen` |
-| | `get_service_health` | `name` | Probes `/health` live; returns status + latency |
-| **Correlation** | `correlate_trace` | `trace_id` | Datadog APM URL + pre-filtered Splunk search URL + involved services + per-service log counts |
-| | `find_recent_deploys` | `service`, `lookback` | Recent deploys (stub deploy log) — "did something change?" |
-| | `find_related_incidents` | `service`, `lookback` | Past incidents (stub local SQLite) — learning-from-history |
-| **Runbooks** | `list_runbooks` | (none) | Array of `{ id, name, description, params_schema }` |
-| | `run_runbook` | `id`, `params` | **SSE-streaming** progress of runbook execution |
+`tools/list` returns **only `discover_tools` plus the 11 `topology__*` tools** — Splunk/Datadog tool schemas are hidden in the server-side registry until the agent calls `discover_tools(query)`. Tool names below are exactly as the agent sees and calls them.
 
-**Initial runbooks** (live as Ballerina functions in `mcp-server/runbooks/*.bal`, each appending to an
+| Group | Tool (agent-facing name) | Inputs | Returns |
+|-------|--------------------------|--------|---------|
+| **Discovery** | `discover_tools` | `query` | JSON manifest bundle — top-k tool schemas matching the query; agent calls `absorbDiscovered` to add them to its active set for subsequent turns |
+| **Lookup / topology** | `topology__lookup_service` | `name` | `{ owner, repo, runbook_ids, sla, health_endpoint, dependencies }` |
+| | `topology__get_dependencies` | `name`, `direction` (`upstream`/`downstream`/`both`) | Adjacency list — must match the §3 topology exactly |
+| | `topology__list_services` | (none) | All known services + `last_seen` |
+| | `topology__get_service_health` | `name` | Probes `/health` live; returns status + latency |
+| **Correlation** | `topology__correlate_trace` | `trace_id` | Datadog APM URL + pre-filtered Splunk search URL + involved services — links + topology only; the agent follows up with `splunk__splunk_run_query` / `datadog__get_datadog_trace` to fetch live data |
+| | `topology__find_recent_deploys` | `service`, `lookback` | Recent deploys (stub deploy log) — "did something change?" |
+| | `topology__find_related_incidents` | `service`, `lookback` | Past incidents (stub local SQLite) — learning-from-history |
+| **Runbooks** | `topology__list_runbooks` | (none) | Array of `{ id, name, description, params_schema }` |
+| | `topology__run_runbook` | `id`, `params` | **SSE-streaming** progress of runbook execution |
+| **Ops** | `topology__get_audit_log` | (none) | Recent runbook execution audit entries |
+| | `topology__get_deploy_freeze_status` | (none) | Current deploy-freeze flag state |
+
+**Initial runbooks** (live as Ballerina functions in `mcp-proxy/runbooks/*.bal`, each appending to an
 `audit.log`):
 
 | Runbook | Action |
@@ -248,10 +253,7 @@ The tool registry is backed by a keyword-based scorer today; a pgvector + `nomic
 
 ### Optional API Manager MCP Gateway
 
-The three MCP servers may be fronted by the **WSO2 API Manager MCP Gateway**, which gives **auth,
-rate-limiting, and audit "for free."** With the gateway, the agent points at *one* gateway URL with
-three tool namespaces and defers auth to it; without it, the agent opens three direct MCP connections,
-each with its own URL + bearer token. The gateway is the WSO2-native, cleaner-narrative option.
+The **MCP Proxy** (the agent's single entry point) may be fronted by the **WSO2 API Manager MCP Gateway**, which gives **auth, rate-limiting, and audit "for free."** The agent's single `BALLERINA_TOPOLOGY_MCP_URL` points at the gateway URL; the gateway forwards to the proxy, which continues to federate the Splunk/Datadog backends as normal.
 
 ### Agent self-observability (the meta-win)
 
@@ -313,19 +315,22 @@ Operator        payment-svc      Datadog        Agent (Ballerina)            MCP
    │ (30% 502 + 2s)  │ degrades     │                 │                            │                      │
  2.│                 │ ───metrics──►│ monitor fires    │                            │                      │
    │                 │              │ ──webhook (≤60s)►│                            │                      │
- 3.│                 │              │   get_datadog_metric → error-rate spike       │                      │
+ 3.│                 │              │   discover_tools("Datadog metrics") ──────────► manifest bundle        │
+   │                 │              │   datadog__get_datadog_metric → error-rate spike                     │
    │                 │              │     └─ identifies payment-service as origin   │                      │
-   │                 │              │   get_dependencies("payment-service",         │                      │
+   │                 │              │   topology__get_dependencies("payment-service",                      │
    │                 │              │       "downstream")  ─────────────────────────► blast radius         │
-   │                 │              │   pull sample trace from Datadog              │                      │
-   │                 │              │   correlate_trace(trace_id) ──────────────────► Datadog + Splunk URLs│
-   │                 │              │     └─ Splunk logs show mock-bank timeouts ◄───┤                      │
-   │                 │              │   find_recent_deploys("payment-service") ─────► nothing → rules out  │
-   │                 │              │     └─ suspects chaos / external dependency   │   a deploy            │
+   │                 │              │   discover_tools("Datadog trace APM") ─────────► manifest bundle     │
+   │                 │              │   datadog__get_datadog_trace (sample trace_id)│                      │
+   │                 │              │   topology__correlate_trace(trace_id) ─────────► Datadog+Splunk URLs │
+   │                 │              │   discover_tools("Splunk log 502") ────────────► manifest bundle     │
+   │                 │              │     splunk__splunk_run_query ◄── Splunk logs show mock-bank timeouts │
+   │                 │              │   topology__find_recent_deploys("payment-svc") ► nothing→rules out  │
+   │                 │              │     └─ suspects chaos / external dependency   │   a deploy           │
  ──┼─────────────────┼──────────────┼── PROPOSE-BEFORE-ACT GATE ────────────────────┼──────────────────────┼──
-   │                 │              │   proposes disable-chaos runbook ─────────────┼─────────────────────►│
+   │                 │              │   topology__list_runbooks → proposes disable-chaos ──────────────►│
  4.│                 │              │                 │                ◄── approves ─┼──────────────────────┤
- 5.│                 │              │   run_runbook("disable-chaos",                │                      │
+ 5.│                 │              │   topology__run_runbook("disable-chaos",       │                      │
    │                 │◄─/chaos/reset─┤      {service:"payment-service"}) ──SSE──────► streams progress      │
    │                 │ recovers     │                 │                            │                      │
  6.│                 │              │   writes markdown postmortem (slide-ready)    │                      │
@@ -335,9 +340,9 @@ Operator        payment-svc      Datadog        Agent (Ballerina)            MCP
 |:----:|------|--------------|
 | 1 | **Inject** | Operator triggers `payment-service` chaos: 30% 502 rate + 2s latency. Mesh degrades. |
 | 2 | **Alert** | Pre-configured Datadog monitor fires within 60s; webhook hits the agent. |
-| 3 | **Investigate** | Agent pulls metrics → identifies `payment-service` spike → `get_dependencies(...,"downstream")` for blast radius → pulls a sample trace → `correlate_trace` → jumps to Splunk logs showing **mock-bank timeouts** → `find_recent_deploys` finds nothing, rules out a deploy → suspects chaos/external dependency. |
-| 4 | **Propose / approve** | Agent **proposes** `disable-chaos` (does not run it); human approves in the agent console. |
-| 5 | **Remediate** | Agent calls `run_runbook("disable-chaos", { service: "payment-service" })`; SSE streams progress; chaos resets; mesh recovers. |
+| 3 | **Investigate** | Agent calls `discover_tools` to load Datadog schemas, pulls metrics via `datadog__get_datadog_metric` → identifies `payment-service` spike → `topology__get_dependencies(...,"downstream")` for blast radius → loads trace tools via `discover_tools`, calls `datadog__get_datadog_trace` → `topology__correlate_trace` builds the Splunk search → loads Splunk tools via `discover_tools`, calls `splunk__splunk_run_query` → sees **mock-bank timeouts** → `topology__find_recent_deploys` finds nothing, rules out a deploy → suspects chaos/external dependency. |
+| 4 | **Propose / approve** | Agent calls `topology__list_runbooks`, **proposes** `disable-chaos` (does not run it); human approves in the agent console. |
+| 5 | **Remediate** | Agent calls `topology__run_runbook("disable-chaos", { service: "payment-service" })`; SSE streams progress; chaos resets; mesh recovers. |
 | 6 | **Postmortem** | Agent generates a markdown postmortem — what happened, what it did, links to the traces. |
 
 The agent is invoked by a **Datadog monitor → webhook** in the rehearsed live demo (most realistic),
@@ -402,7 +407,7 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 | **Runbook idempotency** | Double-invoking `restart-service` mid-run | Per-runbook lock |
 | **Token leakage in agent traces** | Bearer tokens captured in request bodies | Use Agent Manager's redaction config |
 | **Clock skew / ingest lag** | Containers vs SaaS timing drift during smoke tests | Watch ingest delays; narrate over lag in the live demo |
-| **Context saturation when real vendor MCPs are wired in** | Official Splunk + Datadog MCPs expose 50+ tools each; lazy loading is already implemented via `discover_tools` but the proxy's routing to real backends is a WIP | Complete the proxy routing code in `generate/mcp-server/` before removing mock MCP URLs from the agent env |
+| **Context saturation when real vendor MCPs are wired in** | Official Splunk + Datadog MCPs expose 50+ tools each | Handled by design: the proxy federates the backends and keeps their manifests in a server-side registry, revealing them only via `discover_tools` (lazy loading). Swapping to live MCPs is a `SPLUNK_MCP_URL`/`DATADOG_MCP_URL` change on the proxy — no agent change |
 
 ---
 
@@ -425,7 +430,7 @@ DevOpsOverSightAgent/
 │   ├── payment/         payment-service      │  (headline chaos target)
 │   ├── notification/    notification-service ┘
 │   ├── load-gen/        traffic generator + chaos one-liners
-│   ├── mcp-server/      MCP Proxy (Streamable HTTP :8290) [Phase 3]
+│   ├── mcp-proxy/       MCP Proxy (Streamable HTTP :8290) [Phase 3]
 │   │   └── runbooks/    runbook fns: restart-service, clear-cache, disable-chaos, freeze-deploys
 │   ├── splunk-mock-mcp/ mock Splunk MCP backend (:8400)  [Phase 4]
 │   ├── datadog-mock-mcp/ mock Datadog MCP backend (:8401) [Phase 4]

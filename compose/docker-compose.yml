@@ -291,7 +291,7 @@ services:
   # SPLUNK_MCP_URL / DATADOG_MCP_URL to point at real SaaS MCPs when creds arrive.
   mcp-proxy:
     build:
-      context: ../generate/mcp-server
+      context: ../generate/mcp-proxy
       <<: *ballerina-build
     image: devops-poc/mcp-proxy:latest
     environment:
@@ -372,11 +372,9 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o}
-      # Single MCP entry point — the proxy aggregates all three tool namespaces.
-      # TODO: once mcp-proxy implements full proxying, remove the two direct URLs below.
+      # Single MCP entry point — the proxy federates the Splunk/Datadog backends
+      # and its own topology namespace. The agent needs only this one URL.
       BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-proxy:8290}
-      SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
-      DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
     ports:
       - "8092:8000"  # listener on 8000. host 8082/8080 are taken by Colima's AMP-VM port-forward, so use 8092
     networks: [devops-poc]

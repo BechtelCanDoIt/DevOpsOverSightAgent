@@ -222,6 +222,9 @@ dependencies = [
 	{org = "ballerina", name = "lang.value"},
 	{org = "ballerina", name = "observe"}
 ]
+modules = [
+	{org = "ballerina", packageName = "log", moduleName = "log"}
+]
 
 [[package]]
 org = "ballerina"
@@ -363,10 +366,11 @@ modules = [
 
 [[package]]
 org = "devopspoc"
-name = "mcp_server"
+name = "mcp_proxy"
 version = "0.1.0"
 dependencies = [
 	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "os"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"},
@@ -375,6 +379,6 @@ dependencies = [
 	{org = "ballerinax", name = "prometheus"}
 ]
 modules = [
-	{org = "devopspoc", packageName = "mcp_server", moduleName = "mcp_server"}
+	{org = "devopspoc", packageName = "mcp_proxy", moduleName = "mcp_proxy"}
 ]
 

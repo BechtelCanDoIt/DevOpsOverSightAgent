@@ -65,7 +65,7 @@ See [manualdemo.md](demo/manualdemo.md)
   This runs bal test across all 12 packages. You'll see pass/fail per package. Expected: 129 total passing.
 
   Individual packages:
-  cd generate/mcp-server && bal test        # 22 tests
+  cd generate/mcp-proxy && bal test        # 22 tests
   cd generate/splunk-mock-mcp && bal test   # 8 tests
   cd generate/datadog-mock-mcp && bal test  # 11 tests
   cd generate/agent && bal test             # 8 tests
@@ -112,7 +112,7 @@ The MCP Proxy speaks **Streamable HTTP** (plain HTTP POST at `/mcp`) — not STD
 
    You should see `Connected` in green and the server info pane populate.
 
-5. Click the **Tools** tab → **List Tools**. You'll see all 9 tools (`list_services`, `lookup_service`, `get_dependencies`, `get_service_health`, `correlate_trace`, `find_recent_deploys`, `find_related_incidents`, `list_runbooks`, `run_runbook`).
+5. Click the **Tools** tab → **List Tools**. You'll see `discover_tools` plus the 11 `topology__*` tools: `topology__lookup_service`, `topology__get_dependencies`, `topology__list_services`, `topology__get_service_health`, `topology__correlate_trace`, `topology__find_recent_deploys`, `topology__find_related_incidents`, `topology__list_runbooks`, `topology__run_runbook`, `topology__get_audit_log`, `topology__get_deploy_freeze_status`. Splunk/Datadog tools are **not** in this list — they are hidden server-side until you call `discover_tools`.
 
 6. **Call a tool manually** — click any tool, fill in the inputs, click **Run Tool**:
    - `list_services` — no inputs — returns all 7 mesh services
@@ -164,9 +164,9 @@ make investigate
 
 | Path | Contents |
 |------|----------|
-| [`README.md`](README.md) · [`architecture.md`](architecture.md) · [`CLAUDE.md`](CLAUDE.md) | This file (component reference); deep-dive architecture; Claude Code guidance + locked decisions |
+| [`README.md`](README.md) · [`architecture.md`](architecture/architecture.md) · [`CLAUDE.md`](CLAUDE.md) | This file (component reference); deep-dive architecture; Claude Code guidance + locked decisions |
 | `todo/` | Authoritative phase specs (`phase-0` … `phase-5`) — start with [`todo/README.md`](todo/README.md) |
-| `generate/` | Ballerina source — one package per service + `load-gen` + `mcp-server` (MCP Proxy) + `agent` + two mock MCPs |
+| `generate/` | Ballerina source — one package per service + `load-gen` + `mcp-proxy` (MCP Proxy) + `agent` + two mock MCPs |
 | `compose/` | Docker Compose observability stack (Phase 1) |
 | `catalog/` | Service catalog YAML for the MCP Proxy (Phase 3) |
 | `demo/` | Demo script + chaos inject/reset scripts (Phase 5) |
@@ -185,13 +185,13 @@ This POC is built phase-by-phase. See [`todo/README.md`](todo/README.md) for the
 
 The system has two tiers. A **workload tier** (Docker Compose) runs the seven-service Ballerina retail mesh plus the infrastructure it depends on (Postgres, Redis, NATS) and the telemetry pipeline (a single OTel Collector fanning out to Splunk and Datadog). 
 
-An **agent tier** (WSO2 Agent Manager on Kubernetes/kind) runs a **Ballerina** incident-response agent that reaches three MCP servers — Splunk, Datadog, and the custom Ballerina MCP — to correlate signals and remediate.
+An **agent tier** (WSO2 Agent Manager on Kubernetes/kind) runs a **Ballerina** incident-response agent that reaches a **single MCP Proxy** (`:8290`). The proxy federates the Splunk and Datadog MCP backends itself — the agent never connects to them directly.
 
-For the deep dive — full topology diagrams, the telemetry fan-out, the trace-correlation flow, and the propose-before-act remediation loop — see **[`architecture.md`](architecture.md)**. This README is the component reference and getting-started; it does not duplicate those diagrams.
+For the deep dive — full topology diagrams, the telemetry fan-out, the trace-correlation flow, and the propose-before-act remediation loop — see **[`architecture.md`](architecture/architecture.md)**. This README is the component reference and getting-started; it does not duplicate those diagrams.
 
 ## MCP best practices
 
-The agent reaches every observability backend through **one MCP entry point — the MCP Proxy** (`mcp-proxy`, `:8290`, source in `generate/mcp-server/`). The proxy owns the topology, correlation, and runbook tools locally and forwards Splunk/Datadog tool calls to their backends. This federated-proxy shape is deliberate: it keeps the agent's context small, makes mock↔live a one-env-var swap on the proxy (never the agent), and gives a single place to apply routing, result, and guardrail policy. The lazy-loading half lives in the agent — topology tools are always in context; Splunk/Datadog tools load on demand via `discover_tools`.
+The agent reaches every observability backend through **one MCP entry point — the MCP Proxy** (`mcp-proxy`, `:8290`, source in `generate/mcp-proxy/`). The proxy owns the topology, correlation, and runbook tools locally, federates the Splunk/Datadog MCP backends (connecting to them itself), and routes each namespaced tool call to the right origin by stripping its prefix. This federated-proxy shape is deliberate: it keeps the agent's context small, makes mock↔live a one-env-var swap on the proxy (never the agent), and gives a single place to apply routing, result, and guardrail policy. Lazy loading lives in the proxy too — it advertises only `discover_tools` + the topology tools in `tools/list`, keeps the Splunk/Datadog manifests in a server-side registry, and returns them on demand when the agent calls `discover_tools`. The agent seeds its context from the proxy's tool list and folds discovered manifests in as the investigation proceeds. See the flow diagrams in **[`architecture/sequence-overview.md`](architecture/sequence-overview.md)** (agent → proxy → backends) and **[`architecture/sequence-tool-routing.md`](architecture/sequence-tool-routing.md)** (registry lookup + prefix routing inside the proxy).
 
 The full pattern catalog and rationale live in the **[`mcp best practices/`](mcp%20best%20practices/)** folder:
 
@@ -204,7 +204,7 @@ How this demo maps to each practice:
 |---|---|---|:--:|---|
 | 1 | Minimal surface / split servers | Break large servers into ≤4 semantic units per component | **Y** | 3 servers; the proxy's 11 tools split cleanly into topology / correlation / runbook |
 | 2 | Lazy tool loading / deferred discovery | Expose a `discover_tools` gateway; don't inject all manifests upfront | **Y** | Topology pre-seeded; Splunk/Datadog loaded on demand |
-| 3 | Semantic router / tool registry | Back discovery with pgvector + embeddings for top-k matching | **N** | Doesn't fit a POC — a keyword scorer is accurate enough for ~21 tools; vector infra is deliberately deferred until live vendor MCPs (50+ tools each) land |
+| 3 | Semantic router / tool registry | Back discovery with pgvector + embeddings for top-k matching | **Partial** | The registry + `discover_tools` search live in the proxy (Pattern 3's shape), but a keyword scorer stands in for pgvector — accurate enough for ~21 tools; vector infra is deferred until live vendor MCPs (50+ tools each) land |
 | 4 | Higher-level abstractions | Replace fine-grained tool clusters with Skills / CLI bridges / subagents | **Y** | `correlate_trace` bundles DD URL + Splunk SPL + involved services in one call; runbooks wrap multi-step actions |
 | 5 | Per-session tool sets / project scoping | Multiple `mcp.*.json` configs selected per project | **N** | Does not apply — single-purpose agent with a fixed toolset, not a multi-project Claude config |
 | 6 | Namespace + router-friendly descriptions | Prefix federated tool names; write domain-tagged descriptions | **Y** | `splunk__`/`datadog__`/`topology__` name prefixes; `[splunk]`/`[correlation]`/`[runbook]` description tags |
@@ -317,7 +317,7 @@ All services emit OTLP natively (Ballerina observability module) to a **single O
 | Logs | **Splunk (HEC)** | Splunk is the log-of-record (`DD_LOGS_ENABLED=false` to avoid double-billing) |
 | Metrics | **Datadog** | Datadog is the metrics-of-record |
 
-The Collector tags everything with `service.namespace=devops-poc` and `deployment.environment=demo`. The **join key** across systems is the structured-log `trace_id` / `span_id`: each service emits JSON logs carrying the active `trace_id` and `span_id`, so a trace seen in Datadog APM can be matched to its log lines in Splunk. Mind the trace-ID format mismatch — Datadog surfaces a 64-bit `dd.trace_id` alongside the 128-bit `otel.trace_id`; the Ballerina MCP correlation layer must handle both. See [`architecture.md`](architecture.md) for the full pipeline diagram and [`todo/phase-1-compose.md`](todo/phase-1-compose.md) for the Collector config.
+The Collector tags everything with `service.namespace=devops-poc` and `deployment.environment=demo`. The **join key** across systems is the structured-log `trace_id` / `span_id`: each service emits JSON logs carrying the active `trace_id` and `span_id`, so a trace seen in Datadog APM can be matched to its log lines in Splunk. Mind the trace-ID format mismatch — Datadog surfaces a 64-bit `dd.trace_id` alongside the 128-bit `otel.trace_id`; the Ballerina MCP correlation layer must handle both. See [`architecture.md`](architecture/architecture.md) for the full pipeline diagram and [`todo/phase-1-compose.md`](todo/phase-1-compose.md) for the Collector config.
 
 ## MCP servers
 
@@ -334,7 +334,7 @@ The agent has a **single MCP entry point: the MCP Proxy** (`mcp-proxy`, `:8290`)
                                               ▼
                              ┌────────────────────────────┐
                              │        MCP Proxy :8290      │
-                             │   generate/mcp-server/      │
+                             │   generate/mcp-proxy/      │
                              │                             │
                              │  topology · correlation     │
                              │  runbook executor           │
@@ -376,21 +376,24 @@ The agent has a **single MCP entry point: the MCP Proxy** (`mcp-proxy`, `:8290`)
 
 ### MCP Proxy (custom)
 
-The **single MCP entry point for the agent.** It owns the service catalog, dependency graph, cross-system correlation, and scoped runbook execution locally, and proxies Splunk/Datadog tool calls to the respective MCP backends. Built in Ballerina; runs over **Streamable HTTP on `:8290`** (HTTP/SSE fallback). Source lives in `generate/mcp-server/`; the agent connects via `BALLERINA_TOPOLOGY_MCP_URL`. OTel-instrumented so its outbound calls show up in Datadog alongside the mesh. See [`todo/phase-3-mcp.md`](todo/phase-3-mcp.md).
+The **single MCP entry point for the agent.** It owns the service catalog, dependency graph, cross-system correlation, and scoped runbook execution locally, and proxies Splunk/Datadog tool calls to the respective MCP backends. Built in Ballerina; runs over **Streamable HTTP on `:8290`** (HTTP/SSE fallback). Source lives in `generate/mcp-proxy/`; the agent connects via `BALLERINA_TOPOLOGY_MCP_URL`. OTel-instrumented so its outbound calls show up in Datadog alongside the mesh. See [`todo/phase-3-mcp.md`](todo/phase-3-mcp.md).
 
-**Tool catalog:**
+**Tool catalog** (names as seen by the agent — `topology__*` are pre-seeded in `tools/list`; `splunk__*`/`datadog__*` are revealed on demand via `discover_tools`):
 
-| Group | Tool | Inputs | Returns |
+| Group | Tool (as called by the agent) | Inputs | Returns |
 |---|---|---|---|
-| Lookup / topology | `lookup_service` | `name` | `{ owner, repo, runbook_ids, sla, health_endpoint, dependencies }` |
-| Lookup / topology | `get_dependencies` | `name`, `direction` (`upstream`/`downstream`/`both`) | adjacency list (matches the Phase 2 topology) |
-| Lookup / topology | `list_services` | (none) | all known services with `last_seen` |
-| Lookup / topology | `get_service_health` | `name` | live `/health` probe — status + latency |
-| Correlation | `correlate_trace` | `trace_id` | Datadog APM URL + Splunk search URL/SPL + involved services — **links + topology only**; the proxy then fetches live data via the Splunk/Datadog MCP backends |
-| Correlation | `find_recent_deploys` | `service`, `lookback` | recent deploys from a stub deploy log ("did something change?") |
-| Correlation | `find_related_incidents` | `service`, `lookback` | past incidents from a local SQLite stub (learning-from-history) |
-| Runbooks | `list_runbooks` | (none) | array of `{ id, name, description, params_schema }` |
-| Runbooks | `run_runbook` | `id`, `params` | streaming (SSE) progress of the execution |
+| Discovery | `discover_tools` | `query` | JSON manifest bundle of top-k tools matching the query (revealed Splunk/Datadog schemas are added to the agent's active tool set) |
+| Lookup / topology | `topology__lookup_service` | `name` | `{ owner, repo, runbook_ids, sla, health_endpoint, dependencies }` |
+| Lookup / topology | `topology__get_dependencies` | `name`, `direction` (`upstream`/`downstream`/`both`) | adjacency list (matches the Phase 2 topology) |
+| Lookup / topology | `topology__list_services` | (none) | all known services with `last_seen` |
+| Lookup / topology | `topology__get_service_health` | `name` | live `/health` probe — status + latency |
+| Correlation | `topology__correlate_trace` | `trace_id` | Datadog APM URL + Splunk search URL/SPL + involved services — **links + topology only**; agent fetches live data via Splunk/Datadog tools |
+| Correlation | `topology__find_recent_deploys` | `service`, `lookback` | recent deploys from a stub deploy log ("did something change?") |
+| Correlation | `topology__find_related_incidents` | `service`, `lookback` | past incidents from a local SQLite stub (learning-from-history) |
+| Runbooks | `topology__list_runbooks` | (none) | array of `{ id, name, description, params_schema }` |
+| Runbooks | `topology__run_runbook` | `id`, `params` | streaming (SSE) progress of the execution |
+| Ops | `topology__get_audit_log` | (none) | recent runbook execution audit entries |
+| Ops | `topology__get_deploy_freeze_status` | (none) | current deploy-freeze flag state |
 
 **Runbooks shipped:**
 
@@ -448,16 +451,16 @@ Once the control plane is up, create a **Platform-Hosted** agent in `http://loca
 | Exposed Port | `8080` |
 | Health Check Path | `/health` |
 
-**Environment variables / secrets: (For Local Mocks)**
+**Environment variables / secrets — agent container (mock mode):**
 
-| Variable | Value (mock mode) |
-|----------|------------------|
-| `LLM_PROVIDER` | `anthropic` to use Anthropic directly; `amp` to let AMP route to any model via its AI gateway |
-| `ANTHROPIC_API_KEY` | your Anthropic API key (`sk-ant-…`) — required when `LLM_PROVIDER=anthropic` |
-| `SPLUNK_MCP_URL` | `http://host.k3d.internal:8400` |
-| `DATADOG_MCP_URL` | `http://host.k3d.internal:8401` |
-| `BALLERINA_TOPOLOGY_MCP_URL` | `http://host.k3d.internal:8290` |
-| `OTEL_SERVICE_NAME` | `devops-oversight-agent` |
+| Variable | Value | Note |
+|----------|-------|------|
+| `LLM_PROVIDER` | `anthropic` or `amp` | `anthropic` = direct API; `amp` = AMP AI gateway routes to any model |
+| `ANTHROPIC_API_KEY` | `sk-ant-…` | Required when `LLM_PROVIDER=anthropic` |
+| `BALLERINA_TOPOLOGY_MCP_URL` | `http://host.k3d.internal:8290` | The agent connects **only** to the MCP Proxy; `host.k3d.internal` resolves to the Docker host from inside the k3d pod |
+| `OTEL_SERVICE_NAME` | `devops-oversight-agent` | — |
+
+> **`SPLUNK_MCP_URL` and `DATADOG_MCP_URL` belong on the proxy, not the agent.** The agent talks to one endpoint (`BALLERINA_TOPOLOGY_MCP_URL`). Set `SPLUNK_MCP_URL=http://host.k3d.internal:8400` and `DATADOG_MCP_URL=http://host.k3d.internal:8401` as env vars on the `mcp-proxy` container (or the AMP component that runs it) if the proxy also runs in k3d. If the proxy runs in compose (the default), those URLs stay as the compose-internal defaults and no override is needed.
 
 > When `LLM_PROVIDER=anthropic`, AMP automatically injects `ANTHROPIC_URL` so all Anthropic calls route through AMP's AI gateway (rate-limiting, audit, token tracking). When `LLM_PROVIDER=amp`, AMP injects `LLM_BASE_URL` for its OpenAI-compatible gateway — set `LLM_MODEL` to the model you want AMP to route to. You do **not** set `ANTHROPIC_URL` or `LLM_BASE_URL` yourself; they are AMP-injected.
 
@@ -483,6 +486,6 @@ curl -X POST http://localhost:8082/chat \
 ## See also
 
 - **[`CLAUDE.md`](CLAUDE.md)** — locked decisions, data flows, and known gotchas (trace-ID mismatch, NATS async propagation, SSE buffering, pod→compose reachability).
-- **[`architecture.md`](architecture.md)** — the deep dive: topology diagrams, telemetry fan-out, correlation and remediation flows.
+- **[`architecture.md`](architecture/architecture.md)** — the deep dive: topology diagrams, telemetry fan-out, correlation and remediation flows.
 - **[`todo/README.md`](todo/README.md)** — the phased build plan and per-phase exit criteria.
-- **[`TESTS-README.md`](TESTS-README.md)** — per-service unit test inventory: every test name and what it covers.
+- **[`tests/README.md`](tests/README.md)** — per-service unit test inventory: every test name and what it covers.

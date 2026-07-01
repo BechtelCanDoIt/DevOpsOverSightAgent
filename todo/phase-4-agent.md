@@ -48,13 +48,13 @@ The agent connects to all three MCPs at startup, lists tools from each, and pref
 ```
 splunk__splunk_run_query      → splunk-mock-mcp:8400  (or live Splunk MCP)
 datadog__get_datadog_trace    → datadog-mock-mcp:8401 (or mcp.datadoghq.com)
-topology__correlate_trace     → mcp-server:8290
+topology__correlate_trace     → mcp-proxy:8290
 ```
 
 MCP server URLs come from env vars with compose-internal defaults:
 - `SPLUNK_MCP_URL` (default `http://splunk-mock-mcp:8400`)
 - `DATADOG_MCP_URL` (default `http://datadog-mock-mcp:8401`)
-- `BALLERINA_TOPOLOGY_MCP_URL` (default `http://mcp-server:8290`)
+- `BALLERINA_TOPOLOGY_MCP_URL` (default `http://mcp-proxy:8290`)
 
 ### 4.4 System prompt + agent behavior
 - [x] System prompt defines investigation protocol (10 steps: monitors → metrics → trace → correlate → logs → blast radius → deploys → history → propose runbook → summarize) — works with any LLM backend

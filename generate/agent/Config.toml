@@ -2,10 +2,9 @@
 # For local `bal run`, override [ballerinax.jaeger] agentHostname or run without collector.
 
 [devopspoc.devops_oversight_agent]
-# MCP server URLs — override with env vars in compose
-splunkMcpUrl = "http://splunk-mock-mcp:8400"
-datadogMcpUrl = "http://datadog-mock-mcp:8401"
-ballerinaTopologyMcpUrl = "http://mcp-server:8290"
+# The agent connects to ONE MCP server: the MCP Proxy, which federates the
+# Splunk/Datadog backends. Override with BALLERINA_TOPOLOGY_MCP_URL in compose.
+ballerinaTopologyMcpUrl = "http://mcp-proxy:8290"
 
 [ballerina.log]
 format = "json"

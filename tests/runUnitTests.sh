@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# runTests.sh — bring up the infra `bal test` needs, run tests for every
+# runUnitTests.sh — bring up the infra `bal test` needs, run tests for every
 # Ballerina package under generate/, print a per-service results table, and
 # tear the infra back down.
 #
@@ -9,10 +9,10 @@
 # test executes. This script handles that lifecycle.
 #
 # Usage:
-#   ./runTests.sh                # run all twelve packages
-#   ./runTests.sh order payment  # run just the listed packages
-#   KEEP_UP=1 ./runTests.sh      # leave Postgres/Redis/NATS up after tests
-#   BAL=/path/to/bal ./runTests.sh
+#   ./tests/runUnitTests.sh                # run all twelve packages
+#   ./tests/runUnitTests.sh order payment  # run just the listed packages
+#   KEEP_UP=1 ./tests/runUnitTests.sh      # leave Postgres/Redis/NATS up after tests
+#   BAL=/path/to/bal ./tests/runUnitTests.sh
 #
 # Requires: docker, docker compose, and the Ballerina toolchain (Swan Lake
 # 2201.13.x). Default `bal` path matches CONVENTIONS.md.
@@ -21,14 +21,14 @@ set -uo pipefail
 # NOTE: no `-e` — we want to capture each service's exit code, not bail out
 # on the first failure.
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 BAL="${BAL:-/Library/Ballerina/bin/bal}"
 COMPOSE_FILE="compose/docker-compose.yml"
 INFRA_SERVICES=(postgres redis nats)
 ALL_SERVICES=(order payment inventory notification customer store invoice load-gen \
-              agent mcp-server splunk-mock-mcp datadog-mock-mcp)
+              agent mcp-proxy splunk-mock-mcp datadog-mock-mcp)
 
 # Allow narrowing to a subset of services via positional args.
 if [ "$#" -gt 0 ]; then
