@@ -115,10 +115,10 @@ The MCP Proxy speaks **Streamable HTTP** (plain HTTP POST at `/mcp`) — not STD
 5. Click the **Tools** tab → **List Tools**. You'll see `discover_tools` plus the 11 `topology__*` tools: `topology__lookup_service`, `topology__get_dependencies`, `topology__list_services`, `topology__get_service_health`, `topology__correlate_trace`, `topology__find_recent_deploys`, `topology__find_related_incidents`, `topology__list_runbooks`, `topology__run_runbook`, `topology__get_audit_log`, `topology__get_deploy_freeze_status`. Splunk/Datadog tools are **not** in this list — they are hidden server-side until you call `discover_tools`.
 
 6. **Call a tool manually** — click any tool, fill in the inputs, click **Run Tool**:
-   - `list_services` — no inputs — returns all 7 mesh services
-   - `lookup_service` → `name: payment-service` — returns owner, deps, runbooks, SLA
-   - `get_dependencies` → `name: order-service`, `direction: downstream` — returns dependency graph
-   - `correlate_trace` → `trace_id: abc123` — returns Datadog + Splunk URLs for a trace
+   - `topology__list_services` — no inputs — returns all 7 mesh services
+   - `topology__lookup_service` → `name: payment-service` — returns owner, deps, runbooks, SLA
+   - `topology__get_dependencies` → `name: order-service`, `direction: downstream` — returns dependency graph
+   - `topology__correlate_trace` → `trace_id: abc123` — returns Datadog + Splunk URLs for a trace
 
 7. Press `Ctrl-C` in the terminal to stop the inspector proxy when you're done.
 

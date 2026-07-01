@@ -1,6 +1,6 @@
 # Locked Decisions
 
-All architecture and tooling choices that Phases 1–5 depend on. Treat these as immutable for the demo. Re-opening any decision requires updating this file, `CLAUDE.md`, `architecture.md`, and the relevant phase spec.
+All architecture and tooling choices that Phases 1–5 depend on. Treat these as immutable for the demo. Re-opening any decision requires updating this file, `CLAUDE.md`, `architecture/architecture.md`, and the relevant phase spec.
 
 ---
 
@@ -34,23 +34,22 @@ All architecture and tooling choices that Phases 1–5 depend on. Treat these as
 
 ---
 
-## D4 — Ballerina MCP server hostname and port convention
+## D4 — MCP Proxy hostname and port convention
 
 **Decision:**
 
 | Context | Value |
 |---------|-------|
-| Docker Compose service name | `ballerina-mcp` |
-| Ballerina listener port (internal) | `9090` |
-| Host-mapped port | `9099` |
-| URL from the K8s agent (kind) | `http://host.docker.internal:9099` |
-| OTel service name | `ballerina-mcp-service` |
+| Docker Compose service name | `mcp-proxy` |
+| Listener port (internal + host-mapped) | `8290` |
+| URL from the K8s agent pod (k3d) | `http://host.k3d.internal:8290` |
+| URL from within the compose network | `http://mcp-proxy:8290` |
+| OTel service name | `mcp-proxy` |
+| Agent env var | `BALLERINA_TOPOLOGY_MCP_URL` |
 
-**Rationale:** All seven Ballerina services bind on `9090` internally and are mapped to `9091–9097` on the host. Port `9099` continues that sequence (skipping 9098, which the WSO2 Agent Manager k3d quick-start cluster maps for its own use — discovered during Phase 0.3 install).
+**Rationale:** Port `8290` was chosen to avoid conflicts with the mesh services (`8080–8087`) and the agent (`8000`/`8092`). `host.k3d.internal` is the hostname k3d registers in every pod to resolve back to the Docker host — the agent pod in k3d reaches the proxy in compose this way.
 
-**Impact on Phase 3:** The Ballerina MCP package must start its listener on port `9090`. Add `ballerina-mcp` to the compose file following the same build/env pattern as the other services.
-
-**Impact on Phase 4:** The agent config at `agent/mcp/` must set `BALLERINA_MCP_URL=http://host.docker.internal:9099`. The kind cluster must be started with `--config kind-config.yaml` that maps the host network (or the ExtraPortMappings block — to be confirmed in Phase 4 after the 0.4 research resolves the MCP transport question).
+**Source:** `generate/mcp-proxy/` (Ballerina package `mcp_proxy`).
 
 ---
 
@@ -84,6 +83,6 @@ All architecture and tooling choices that Phases 1–5 depend on. Treat these as
 |-----|----------|----------|------|
 | Splunk MCP | Splunk (Splunkbase app 7931) | hosted on Splunk Cloud instance | MCP bearer token |
 | Datadog MCP | Datadog (Bits AI) | `mcp.datadoghq.com` (remote-hosted) | OAuth or API+App key |
-| Ballerina MCP | custom (Phase 3) | `http://host.docker.internal:9098` | none (demo; add token in Phase 5) |
+| MCP Proxy | custom (Phase 3) | `http://host.k3d.internal:8290` (from k3d pod) / `http://mcp-proxy:8290` (from compose) | none (demo; add token in Phase 5) |
 
 **Rationale:** Both vendors ship and maintain their own MCP surfaces. Writing custom REST wrappers around Splunk/Datadog APIs would be redundant, fragile, and unmaintainable. The Ballerina MCP is custom because no vendor owns the mesh topology, the cross-system correlation logic, or the remediation runbooks.

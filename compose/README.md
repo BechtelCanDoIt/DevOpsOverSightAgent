@@ -48,7 +48,7 @@ Host→container port map: store 9091, customer 9092, order 9093, inventory 9094
 2. In `otel-collector/config.yaml`, uncomment the `datadog` / `splunk_hec` exporters and add them to the matching pipelines (and add `filelog` to the logs pipeline + mount `/var/lib/docker/containers`).
 3. `--profile saas` to start the Datadog Agent.
 
-## Pitfalls (see architecture.md §10)
+## Pitfalls (see architecture/architecture.md §10)
 
 - **Trace-ID width**: Datadog shows 64-bit `dd.trace_id` + 128-bit `otel.trace_id`; Splunk holds the 128-bit form. Correlation must use the right width.
 - **Splunk HEC index scope**: trial token may only write `main` — keep `SPLUNK_INDEX=main` unless an index is pre-created.

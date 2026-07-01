@@ -19,7 +19,7 @@
 **Recovery:**
 1. Retry once — Ollama often completes in fewer turns on the next attempt.
 2. If it fails repeatedly, switch to the Anthropic backend: set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in `compose/.env`, then `docker compose up -d devops-oversight-agent`.
-3. The maxTurns is set to 20 in `devops_oversight_agent.bal`. Do not reduce below 18.
+3. The maxTurns is set to 30 in `devops_oversight_agent.bal`. Do not reduce below 25 — Ollama non-determinism plus `discover_tools` overhead can consume up to 25 turns on some runs.
 
 ### Investigation hangs / takes >5 minutes
 **Symptom:** `make investigate` returns HTTP 200 but takes a very long time.

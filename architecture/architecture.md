@@ -420,7 +420,11 @@ below shows the intended final layout and the phase that builds each.
 DevOpsOverSightAgent/
 ├── CLAUDE.md            project instructions for Claude Code
 ├── README.md            component catalog + getting-started
-├── architecture.md      this document
+├── Makefile             convenience targets: demo-mock-up, test-bal, test-proxy, investigate, …
+├── architecture/        deep-dive architecture docs (this directory)
+│   ├── architecture.md          this document
+│   ├── sequence-overview.md     agent → proxy → backends flow diagram
+│   └── sequence-tool-routing.md registry lookup + prefix routing inside the proxy
 ├── generate/            ALL Ballerina source — one package per dir
 │   ├── store/           store-service        ┐
 │   ├── customer/        customer-service     │
@@ -441,6 +445,11 @@ DevOpsOverSightAgent/
 │   ├── .env.example            committed; .env is gitignored
 │   ├── otel-collector/config.yaml   OTLP receivers + splunk_hec + datadog exporters
 │   └── postgres/init.sql       schema/DB per service
+├── tests/               test scripts
+│   ├── runUnitTests.sh          run bal test across all 12 packages (starts infra via compose)
+│   ├── runDockerConfigTests.sh  creds-free integration test: proxy federation + routing
+│   ├── ralph-tests.sh           iterative Claude Code fix loop for unit test failures
+│   └── README.md                per-service unit test inventory
 ├── catalog/             services.yaml — static service catalog (Phase 3)
 ├── demo/                demo orchestration (Phase 5)
 │   ├── script.md               verbatim narration + commands
@@ -451,8 +460,10 @@ DevOpsOverSightAgent/
 
 | Directory | Role | Built in |
 |-----------|------|----------|
+| `architecture/` | Deep-dive architecture docs + sequence diagrams | Phase 0+ |
 | `generate/` | All Ballerina source: 7-service mesh, `load-gen`, MCP Proxy, mock MCPs, Ballerina agent | Phases 2–4 |
 | `compose/` | Docker Compose stack, OTel Collector config, Postgres init, env templates | Phase 1 (+2/3/4) |
+| `tests/` | Unit test runner, Docker integration test, Claude Code fix loop | Phases 2–4 |
 | `catalog/` | `services.yaml` — service catalog backing the MCP Proxy topology tools | Phase 3 |
 | `demo/` | Demo script, chaos-inject and reset scripts, recovery procedures | Phase 5 |
 | `todo/` | Phase specs — the authoritative implementation source of truth | reference |
