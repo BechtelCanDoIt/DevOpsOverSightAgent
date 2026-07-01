@@ -244,7 +244,7 @@ real CMDB.
 
 The agent starts each `investigate()` / `chat()` call with only the `discover_tools(query)` tool in context — **lazy tool loading (Pattern 2 from the MCP scaling guide)**. The agent calls `discover_tools` with a natural-language description of what it needs; the proxy scores all registered tool manifests (across the topology, Splunk, and Datadog namespaces) and returns the top-k matches, which are injected for that turn only. This keeps the initial context window small regardless of how many tools the real Splunk and Datadog MCPs expose.
 
-The tool registry is backed by a keyword-based scorer today; a pgvector + `nomic-embed-text` upgrade (already in the stack) is the planned improvement for production-fidelity routing accuracy. This work is tracked in the Phase 4 exit criteria.
+The tool registry is backed by a keyword-based scorer today; a pgvector + `nomic-embed-text` upgrade (already in the stack) is the planned improvement for production-grade routing accuracy. This work is tracked in the Phase 4 exit criteria.
 
 ### Optional API Manager MCP Gateway
 

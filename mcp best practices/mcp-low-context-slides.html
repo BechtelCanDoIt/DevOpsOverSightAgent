@@ -724,12 +724,12 @@ Turn 2: agent → <span class="fn">list_subscriptions</span>(
 <span class="fn">run_cli</span>(<span class="str">"apim user onboard \
   --name 'Kristen S' \
   --role admin \
-  --tenant fidelity"</span>)
+  --tenant acme"</span>)
 
 <span class="cm"># Or delegate to a subagent:</span>
 <span class="fn">delegate_to_portal_agent</span>(
     task=<span class="str">"Onboard Kristen as admin \
-    in the Fidelity tenant"</span>
+    in the ACME tenant"</span>
 )</div>
         </div>
       </div>
@@ -772,7 +772,7 @@ Turn 2: agent → <span class="fn">list_subscriptions</span>(
   mcp.apim.json        <span class="cm">← APIM admin tools</span>
   mcp.analytics.json   <span class="cm">← metrics + logs</span>
   mcp.infra.json       <span class="cm">← Docker/SSH/systemd</span>
-  mcp.fidelity.json    <span class="cm">← Fidelity engagement</span>
+  mcp.acme.json        <span class="cm">← ACME engagement</span>
 
 <span class="cm"># Launch with scoped config</span>
 claude <span class="str">--mcp-config</span> .claude/mcp.apim.json

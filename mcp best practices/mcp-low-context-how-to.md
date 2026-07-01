@@ -159,7 +159,7 @@ Replace clusters of fine-grained tools with **higher-level abstractions**:
 
 ### Problem
 
-A single `mcp.json` that loads every registered server means a developer debugging a Fidelity integration also has Playwright, Figma, and database admin tools in context — irrelevant noise that costs tokens and creates risk.
+A single `mcp.json` that loads every registered server means a developer debugging an ACME integration also has Playwright, Figma, and database admin tools in context — irrelevant noise that costs tokens and creates risk.
 
 ### Solution
 
@@ -184,7 +184,7 @@ Maintain **multiple tool-set configuration files** and select the appropriate on
 .claude/
   mcp.default.json     ← discovery + common utils only
   mcp.apim.json        ← APIM-scoped tools
-  mcp.fidelity.json    ← Fidelity engagement toolset
+  mcp.acme.json        ← ACME engagement toolset
   mcp.homelab.json     ← prod.aten / dev.aten tools
 ```
 
