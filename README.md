@@ -2,6 +2,21 @@
 
 A local-first demo: a Ballerina retail microservice mesh emits traces, logs, and metrics through a single OTel Collector to **Splunk** (logs/traces) and **Datadog** (APM/metrics). A ballerina agent running under **WSO2 Agent Manager** correlates those signals over MCP to diagnose and remediate a chaos-induced incident.
 
+## Contents
+
+- [Demo Steps (5 minutes)](#demo-steps-5-minutes)
+- [Usage](#usage)
+- [Repository layout](#repository-layout)
+- [Service mesh (7 services + load-gen)](#service-mesh-7-services--load-gen)
+- [Getting started](#getting-started)
+- [Architecture at a glance](#architecture-at-a-glance)
+- [MCP best practices](#mcp-best-practices)
+- [Services](#services)
+- [Observability pipeline](#observability-pipeline)
+- [MCP servers](#mcp-servers)
+- [Agent (client)](#agent-client)
+- [See also](#see-also)
+
 ## Demo Steps (5 minutes)
 
 **Prerequisite:** Ollama running on your Mac with a tool-capable model. (Tested with `qwen3.5:9b`; other Qwen models work.)
@@ -173,6 +188,31 @@ The system has two tiers. A **workload tier** (Docker Compose) runs the seven-se
 An **agent tier** (WSO2 Agent Manager on Kubernetes/kind) runs a **Ballerina** incident-response agent that reaches three MCP servers — Splunk, Datadog, and the custom Ballerina MCP — to correlate signals and remediate.
 
 For the deep dive — full topology diagrams, the telemetry fan-out, the trace-correlation flow, and the propose-before-act remediation loop — see **[`architecture.md`](architecture.md)**. This README is the component reference and getting-started; it does not duplicate those diagrams.
+
+## MCP best practices
+
+The agent reaches every observability backend through **one MCP entry point — the MCP Proxy** (`mcp-proxy`, `:8290`, source in `generate/mcp-server/`). The proxy owns the topology, correlation, and runbook tools locally and forwards Splunk/Datadog tool calls to their backends. This federated-proxy shape is deliberate: it keeps the agent's context small, makes mock↔live a one-env-var swap on the proxy (never the agent), and gives a single place to apply routing, result, and guardrail policy. The lazy-loading half lives in the agent — topology tools are always in context; Splunk/Datadog tools load on demand via `discover_tools`.
+
+The full pattern catalog and rationale live in the **[`mcp best practices/`](mcp%20best%20practices/)** folder:
+
+- **[`mcp-low-context-how-to.md`](mcp%20best%20practices/mcp-low-context-how-to.md)** — the engineering reference: eight patterns + safety notes, each with problem / solution / implementation / tradeoffs.
+- **[`mcp-low-context-slides.html`](mcp%20best%20practices/mcp-low-context-slides.html)** — the slide deck version.
+
+How this demo maps to each practice:
+
+| # | Practice | What it is | In demo? | Comment |
+|---|---|---|:--:|---|
+| 1 | Minimal surface / split servers | Break large servers into ≤4 semantic units per component | **Y** | 3 servers; the proxy's 11 tools split cleanly into topology / correlation / runbook |
+| 2 | Lazy tool loading / deferred discovery | Expose a `discover_tools` gateway; don't inject all manifests upfront | **Y** | Topology pre-seeded; Splunk/Datadog loaded on demand |
+| 3 | Semantic router / tool registry | Back discovery with pgvector + embeddings for top-k matching | **N** | Doesn't fit a POC — a keyword scorer is accurate enough for ~21 tools; vector infra is deliberately deferred until live vendor MCPs (50+ tools each) land |
+| 4 | Higher-level abstractions | Replace fine-grained tool clusters with Skills / CLI bridges / subagents | **Y** | `correlate_trace` bundles DD URL + Splunk SPL + involved services in one call; runbooks wrap multi-step actions |
+| 5 | Per-session tool sets / project scoping | Multiple `mcp.*.json` configs selected per project | **N** | Does not apply — single-purpose agent with a fixed toolset, not a multi-project Claude config |
+| 6 | Namespace + router-friendly descriptions | Prefix federated tool names; write domain-tagged descriptions | **Y** | `splunk__`/`datadog__`/`topology__` name prefixes; `[splunk]`/`[correlation]`/`[runbook]` description tags |
+| 7 | Tool-result hygiene | Bound (truncate/summarize) and neutralize results before they re-enter the loop | **N** | Not a POC priority — mock MCPs return small, trusted payloads; required before pointing at live Splunk/Datadog, where queries return large, attacker-influenced text |
+| 8 | Propose-before-act (HITL) | Human approval before any mutating tool call | **Y** | Hard guardrail: the agent must `list_runbooks` and get explicit approval before `run_runbook` |
+| 9 | Auth / least-privilege on the endpoint | Bearer token or gateway in front of mutating tools | **N** | Doesn't fit a POC — the proxy runs on a trusted local Docker network; production defers auth to the WSO2 MCP Gateway |
+| 10 | CLI / execute gateway least-privilege | Allowlist + low-priv service account for any `run_cli` tool | **N/A** | No `run_cli`/execute tool is exposed — runbooks are a fixed, typed allowlist |
+| 11 | Code-mode sandbox choice | Prefer quickjs-emscripten over RestrictedPython | **N/A** | No code-mode executor in this design |
 
 ## Services
 

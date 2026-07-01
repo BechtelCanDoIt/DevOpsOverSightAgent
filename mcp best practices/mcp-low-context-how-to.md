@@ -5,7 +5,7 @@
 
 ## Overview
 
-As MCP tool catalogs grow, naive approaches flood the model's context window with hundreds of tool manifests on every turn. This guide covers five architectural patterns to keep that footprint small, deterministic, and fast. Each section describes the problem, the solution, implementation steps, and tradeoffs.
+As MCP tool catalogs grow, naive approaches flood the model's context window with hundreds of tool manifests on every turn. This guide covers eight architectural patterns to keep that footprint small, deterministic, safe, and fast. Patterns 1–5 are context-reduction patterns; patterns 6–8 cover routing hygiene, result hygiene, and guardrails for a **federated proxy** that fronts external MCP servers. Each section describes the problem, the solution, implementation steps, and tradeoffs.
 
 ---
 
@@ -198,6 +198,87 @@ Maintain **multiple tool-set configuration files** and select the appropriate on
 
 ---
 
+## Pattern 6: Namespace Tools & Write Router-Friendly Descriptions
+
+### Problem
+
+When one agent federates several MCP servers, tool names collide and blur. Two servers may both expose a `search` or `get_metric`; the model can't tell Splunk's log search from Datadog's log search, and a keyword/semantic router scoring on description text has nothing distinctive to match. Human-readable descriptions written for a docs page ("Returns metric data") give the router no signal about *which domain* the tool belongs to.
+
+### Solution
+
+Give every federated tool a **namespace prefix** and a **domain-tagged, action-oriented description**. The prefix disambiguates identical names across servers; the tag front-loads the routing signal so a discovery query like `"Datadog metric"` scores the right tool first. This is cheap (a string prefix) and pays off on every discovery call.
+
+### How to Implement
+
+1. Prefix tool *names* by origin server at registration time — `splunk__run_query`, `datadog__get_metric`, `topology__correlate_trace`. Strip the prefix before dispatching to the backend.
+2. Prefix tool *descriptions* with a bracketed domain tag — `[splunk] Run an SPL query…`, `[correlation] Given a trace_id, return…`. Do this both in the source server's manifest (so it is self-describing) and, if the client enriches, at registration.
+3. Write descriptions for the router, not a human: lead with the verb and the noun it operates on, name the domain, and mention the key input. Avoid marketing prose.
+4. Do **not** duplicate the tool list inside the system prompt — the model already receives it via the `tools` API parameter. A hardcoded list goes stale the moment a tool is renamed.
+
+### Tradeoffs
+
+| Pro | Con |
+|-----|-----|
+| Eliminates cross-server name collisions | Slightly longer tool names in traces/logs |
+| Router accuracy jumps with zero infra | Prefix convention must be applied consistently |
+| Descriptions become self-documenting | Requires a one-time pass over existing manifests |
+
+---
+
+## Pattern 7: Tool-Result Hygiene (Bound & Neutralize)
+
+### Problem
+
+Discovery keeps *manifests* out of context, but tool **results** flow straight back into the loop — and they can be huge and hostile. A single Splunk query can return thousands of log lines; dumping them verbatim blows the context budget you worked to protect. Worse, result content is often attacker-influenced (a log line, an error message, a trace annotation) and can carry a prompt-injection payload that hijacks routing — especially dangerous when the agent can execute mutating runbooks.
+
+### Solution
+
+Treat every tool result as untrusted, unbounded input. **Bound** it (truncate or server-side summarize to a token ceiling) and **neutralize** it (strip/escape control sequences and instruction-like content) before it re-enters the agent loop as context.
+
+### How to Implement
+
+1. Cap result size at the source: paginate or `head`-limit large query tools; return a count + top-N + a follow-up handle rather than the full payload.
+2. Summarize server-side when the raw data isn't needed verbatim — return the aggregate the agent actually reasons over, not the firehose.
+3. Escape or fence untrusted result text so embedded "ignore previous instructions…" cannot be read as a directive; wrap it in a clearly-delimited data block.
+4. Log the originating tool + query alongside the (bounded) result for audit and replay.
+
+### Tradeoffs
+
+| Pro | Con |
+|-----|-----|
+| Keeps context flat even on chatty tools | Truncation can hide a relevant tail row |
+| Closes the top prompt-injection vector | Summarization adds server-side work |
+| Bounded results = predictable latency/cost | Requires a per-tool size policy |
+
+---
+
+## Pattern 8: Propose-Before-Act & Least-Privilege for Mutating Tools
+
+### Problem
+
+Read tools are cheap to get wrong; **mutating** tools are not. A tool that restarts a service, flushes a cache, freezes deploys, or resets chaos can cause an outage if the model calls it on a bad inference or a poisoned result (Pattern 7). Exposing such tools with no approval step and no authentication turns a routing mistake — or any caller on the network — into a production incident.
+
+### Solution
+
+Split the catalog into read (safe, autonomous) and write (gated) tiers. Require **human-in-the-loop approval** before any mutating call, enforced in the prompt *and*, where possible, the transport. Put **authentication and least-privilege** in front of the mutating surface so only authorized callers reach it.
+
+### How to Implement
+
+1. Make propose-before-act a hard rule: the agent must list the candidate action and its parameters and wait for explicit approval before invoking a write tool. Never let a write tool run inside an autonomous loop unprompted.
+2. Keep mutating tools scoped and idempotent — a fixed allowlist of runbooks with typed params, not an open `run_arbitrary_command`.
+3. Authenticate the endpoint: require a bearer token (or delegate to an MCP gateway) so an unauthenticated caller can't invoke write tools directly.
+4. Run the executor as a least-privilege service account and audit-log every mutating invocation with its originating prompt context.
+
+### Tradeoffs
+
+| Pro | Con |
+|-----|-----|
+| A routing/injection error can't mutate prod on its own | Approval step interrupts full autonomy |
+| Auth shrinks the attack surface to authorized callers | Token/gateway management overhead |
+| Audit log gives a reviewable action trail | Allowlist must be maintained as runbooks evolve |
+
+---
+
 ## Safety & Security Notes
 
 These patterns increase power but introduce risks that need explicit guardrails:
@@ -226,6 +307,9 @@ Tool results containing attacker-controlled text can hijack routing. Always stri
 [ ] Back the registry with pgvector + nomic-embed-text (already in stack)
 [ ] Replace fine-grained tool clusters with Skills, CLI bridges, or Subagents
 [ ] Create per-project mcp.*.json files; document which config maps to which engagement
+[ ] Namespace federated tool names; write domain-tagged, router-friendly descriptions
+[ ] Bound and neutralize tool results before they re-enter the loop
+[ ] Gate mutating tools behind propose-before-act approval + endpoint auth
 [ ] Restrict CLI/execute tools to a least-privilege service account
 [ ] Choose quickjs-emscripten over RestrictedPython for any code-mode sandbox
 ```
