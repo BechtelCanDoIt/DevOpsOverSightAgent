@@ -48,7 +48,7 @@ Initial runbooks to ship:
 ## Tasks
 
 ### 3.1 Scaffold
-- [x] `generate/mcp-proxy/` package (lives with the rest of the Ballerina source under `generate/`). Note: the Phase 4 agent's `mcp_client.bal` is the client-side wiring — not part of this server
+- [x] `code/mcp/mcp-proxy/` package (lives under `code/mcp/`). Note: the Phase 4 agent's `mcp_client.bal` is the client-side wiring — not part of this server
 - [x] No Ballerina MCP SDK exists — implemented Streamable HTTP MCP protocol directly (JSON-RPC 2.0 over POST to `/mcp`; `initialize` handshake, `tools/list`, `tools/call`)
 - [x] Same OTel instrumentation as the mesh services — `tracing.bal` wires jaeger + prometheus side-effect imports; the MCP's own calls show up in Datadog
 - [x] Runs in the Docker Compose stack on `:8290` with host port published; agent connects via `http://mcp-proxy:8290` inside the compose network
@@ -85,7 +85,7 @@ Stub deploy log and incident history also live in `correlation.bal` — `find_re
 - [ ] Call `run_runbook("disable-chaos", { service: "payment-service" })`, confirm chaos resets
 
 ### 3.7 Unit tests
-- [x] 22 `@test:Config` tests written and passing (`generate/mcp-proxy/tests/mcp_server_test.bal`)
+- [x] 22 `@test:Config` tests written and passing (`code/mcp/mcp-proxy/tests/mcp_server_test.bal`)
   - Catalog: lookup known/unknown, list count, dependency graph (downstream, upstream, both, leaf)
   - Correlation: Datadog URL format, custom site, SPL content, infer services
   - Deploy stub: find deploys for known/unknown service

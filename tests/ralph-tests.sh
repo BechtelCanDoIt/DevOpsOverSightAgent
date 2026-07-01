@@ -126,8 +126,9 @@ Hard constraints:
 - Do NOT break any service that is currently passing in the report below.
 - Do NOT delete tests, skip them, or weaken assertions to make them pass.
   Fix the underlying behavior or fix a genuinely wrong test expectation.
-- Test files live at `generate/<svc>/tests/<svc>_test.bal`. Project
-  conventions are in `generate/CONVENTIONS.md`.
+- Test files live at `code/generate/<svc>/tests/<svc>_test.bal` for mesh services,
+  `code/mcp/<svc>/tests/<svc>_test.bal` for MCP servers, `code/agent/tests/` for the agent.
+  Project conventions are in `code/CONVENTIONS.md`.
 - For Ballerina API patterns the seeded kit and the passing services
   (payment, inventory, notification, customer, store, invoice on the first
   green run) are reference implementations.

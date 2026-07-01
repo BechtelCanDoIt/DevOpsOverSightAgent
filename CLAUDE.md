@@ -14,12 +14,12 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 
 ## Source layout
 
-- `generate/` — all Ballerina source, one package per directory; includes 7 mesh services, `load-gen`, `mcp-proxy` (MCP Proxy — single agent entry point, proxies to Splunk/Datadog MCPs), `agent` (DevOps OverSight agent), `splunk-mock-mcp`, and `datadog-mock-mcp`.
+- `code/` — all Ballerina source, split into three sub-directories: `agent/` (DevOps OverSight agent), `mcp/` (MCP Proxy + splunk-mock-mcp + datadog-mock-mcp), and `generate/` (7 mesh services + load-gen).
 - `compose/` — Docker Compose stack (Phase 1) · `catalog/` — MCP service catalog (Phase 3) · `demo/` — demo scripts (Phase 5) · `todo/` — phase specs.
 
 ## Locked Decisions (Phase 0 + override)
 
-- **LLM:** **Configurable via `LLM_PROVIDER` env var** — all four providers are in `generate/agent/llm_client.bal`:
+- **LLM:** **Configurable via `LLM_PROVIDER` env var** — all four providers are in `code/agent/llm_client.bal`:
   - `anthropic` (default) — Anthropic Messages API; AMP proxy via `ANTHROPIC_URL`; requires `ANTHROPIC_API_KEY`
   - `ollama` — local Ollama `/api/chat`; creds-free; default model `qwen3.5:9b` at `OLLAMA_BASE_URL`
   - `openai` — OpenAI `/v1/chat/completions`; override endpoint with `OPENAI_BASE_URL`; requires `OPENAI_API_KEY`
@@ -40,8 +40,8 @@ docker compose -f compose/docker-compose.yml up -d
 docker compose -f compose/docker-compose.yml ps
 
 # Phase 2/3/4 — Ballerina services (run individually during dev)
-cd generate/<service-name> && bal run
-cd generate/<service-name> && bal test
+cd code/generate/<service-name> && bal run
+cd code/generate/<service-name> && bal test  # mesh; use code/agent or code/mcp/<svc> for agent/MCP
 
 # Run all 12 packages
 ./tests/runUnitTests.sh

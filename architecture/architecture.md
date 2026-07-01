@@ -43,11 +43,11 @@ and the mesh's own topology service as MCP tool surfaces.
 │                                                                                        │
 │   ┌──────────────────────────────────────────────────────────────────────────────┐   │
 │   │  Ballerina agent  (LLM via HTTP tool-use loop — configurable LLM_PROVIDER)   │   │
-│   │     src: generate/agent/                                                      │   │
+│   │     src: code/agent/                                                      │   │
 │   │     OTel: ballerinax/jaeger (OTLP gRPC) + ballerinax/prometheus              │   │
 │   │     LLM: Ollama (default, creds-free) | Anthropic | OpenAI | AMP             │   │
 │   │     └── single MCP client ──► MCP Proxy (:8290)                              │   │
-│   │  (mcp_client.bal)              src: generate/mcp-proxy/                     │   │
+│   │  (mcp_client.bal)              src: code/mcp/mcp-proxy/                     │   │
 │   └──────────────────────────────────────────────────────────────────────────────┘   │
 │                      │ (optional) WSO2 API Manager MCP Gateway: auth, rate-limit, audit│
 └──────────────────────┼─────────────────────────────────────────────────────────────────┘
@@ -55,7 +55,7 @@ and the mesh's own topology service as MCP tool surfaces.
 ┌──────────────────────┼─────────────────────────────────────────────────────────────────┐
 │  DOCKER COMPOSE  (bridge network: devops-poc)  —  Workload + observability tier        │
 │                       ▼                                                                 │
-│   MCP Proxy (Streamable HTTP, :8290)   src: generate/mcp-proxy/                       │
+│   MCP Proxy (Streamable HTTP, :8290)   src: code/mcp/mcp-proxy/                       │
 │   ├── topology/correlation/runbook tools  (local, owns service catalog)                │
 │   ├── routes Splunk calls  ──► splunk-mock-mcp (:8400)  [or real Splunk MCP via env]   │
 │   └── routes Datadog calls ──► datadog-mock-mcp (:8401) [or real Datadog MCP via env]  │
@@ -84,7 +84,7 @@ and the mesh's own topology service as MCP tool surfaces.
 ## 3. Workload service mesh
 
 A realistic retail mesh — the whole point is **cross-service correlation, blast-radius, and
-"which downstream caused this."** Each source directory `generate/<x>/` maps to service name
+"which downstream caused this."** Each source directory `code/generate/<x>/` maps to service name
 `<x>-service` via `OTEL_SERVICE_NAME` (the `-service` suffix is load-bearing — Phases 3 & 5 reference
 services by that exact name).
 
@@ -136,7 +136,7 @@ Phase 5 demo pulls to manufacture the incident the agent diagnoses.
 
 ### Traffic generator
 
-`generate/load-gen/` is a long-lived Ballerina worker (not a service). It reads a YAML pattern file
+`code/generate/load-gen/` is a long-lived Ballerina worker (not a service). It reads a YAML pattern file
 (`baseline.yaml`, `spike.yaml`, `regression.yaml`) defining baseline RPS, ramp shape, and spike
 windows, plus per-domain flow definitions. It is selected with `--pattern baseline|spike|regression`
 and defaults to `baseline`. It emits its own OTel spans so the generated load is itself visible in
@@ -204,7 +204,7 @@ The agent connects to a **single MCP Proxy** (`:8290`). The proxy owns the servi
 
 | Component | Origin | Hosting / transport | Key tools | Config |
 |-----------|--------|---------------------|-----------|--------|
-| **MCP Proxy** | Custom (this repo) | **Host-local** in Compose, Streamable HTTP `:8290` | topology / correlation / runbooks (catalog below) + proxied Splunk/Datadog tools | `generate/mcp-proxy/`; client `generate/agent/mcp_client.bal` |
+| **MCP Proxy** | Custom (this repo) | **Host-local** in Compose, Streamable HTTP `:8290` | topology / correlation / runbooks (catalog below) + proxied Splunk/Datadog tools | `code/mcp/mcp-proxy/`; client `code/agent/mcp_client.bal` |
 | **Splunk MCP** | Official — *MCP Server for Splunk platform* (Splunkbase 7931) | App on **your Splunk Cloud**; Streamable HTTP; MCP bearer token (RBAC `mcp_tool_execute`). Default: `splunk-mock-mcp :8400` | `splunk_run_query` (SPL), `splunk_get_indexes`, `splunk_get_knowledge_objects` | env `SPLUNK_MCP_URL` on the proxy |
 | **Datadog MCP** | Official — *Datadog MCP Server* (Bits AI) | **Remote-hosted** `mcp.datadoghq.com` (regional per `DD_SITE`). Default: `datadog-mock-mcp :8401` | `get_datadog_metric`, `search_datadog_error_tracking_issues`, `get_datadog_trace`, `search_datadog_logs`, `search_datadog_monitors` | env `DATADOG_MCP_URL` on the proxy |
 
@@ -375,7 +375,7 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| LLM | **Configurable via `LLM_PROVIDER`** | `ollama` (default, creds-free), `anthropic`, `openai`, `amp`. All four providers implemented in `generate/agent/llm_client.bal`; no SDK dependency — calls the provider's HTTP API directly. |
+| LLM | **Configurable via `LLM_PROVIDER`** | `ollama` (default, creds-free), `anthropic`, `openai`, `amp`. All four providers implemented in `code/agent/llm_client.bal`; no SDK dependency — calls the provider's HTTP API directly. |
 | Local Kubernetes | **k3d** (via AMP quick-start) | AMP quick-start bootstraps its own k3d cluster (`amp-local`); no separate kind setup needed. |
 | Splunk deployment | **Splunk Cloud trial** | Splunk Enterprise in a container is heavy and unrealistic; trial reached via the Collector's `splunk_hec` exporter. |
 | Telemetry shipper | **Single OTel Collector** | One unified fan-out point instead of separate per-vendor agents. |
@@ -385,7 +385,7 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 | Deployment split | **Workload + MCP local (Compose); telemetry to SaaS** | Correlation across real backends is the point; SaaS trials avoid heavy local backends. |
 | MCP scope | **Lookup + correlation + scoped runbooks** | No raw infra control — remediation is bounded to vetted runbooks. |
 | Remediation safety | **Propose-before-act gate** | Agent must `list_runbooks` and present its choice; a human approves before `run_runbook`. |
-| Agent framework | **Ballerina (native HTTP + tool-use loop)** | Anthropic Messages API called directly; tool dispatch implemented in `generate/agent/`; no SDK dependency. |
+| Agent framework | **Ballerina (native HTTP + tool-use loop)** | Anthropic Messages API called directly; tool dispatch implemented in `code/agent/`; no SDK dependency. |
 | MCP transport | **Streamable HTTP (`:8290`)** | stdio does not work in K8s; the agent pod needs a network endpoint. |
 | Service catalog | **Static `catalog/services.yaml`** | Simple for a POC; production would read a real CMDB. |
 | Log/metric routing | **Logs→Splunk, metrics→Datadog, traces→both** | Each backend owns its signal of record; traces dual-shipped to enable correlation. |
@@ -425,16 +425,19 @@ DevOpsOverSightAgent/
 │   ├── architecture.md          this document
 │   ├── sequence-overview.md     agent → proxy → backends flow diagram
 │   └── sequence-tool-routing.md registry lookup + prefix routing inside the proxy
-├── generate/            ALL Ballerina source — one package per dir
-│   ├── store/           store-service        ┐
-│   ├── customer/        customer-service     │
-│   ├── order/           order-service        │ 7-service mesh
-│   ├── inventory/       inventory-service    │ (dir <x>/ → <x>-service)
-│   ├── invoice/         invoice-service      │
-│   ├── payment/         payment-service      │  (headline chaos target)
-│   ├── notification/    notification-service ┘
-│   ├── load-gen/        traffic generator + chaos one-liners
-│   ├── mcp-proxy/       MCP Proxy (Streamable HTTP :8290) [Phase 3]
+├── code/                ALL Ballerina source
+│   ├── agent/           DevOps OverSight agent (LLM tool-use loop) [Phase 4]
+│   │   └── tests/       pure-function unit tests (no network)
+│   ├── mcp/             MCP servers
+│   │   ├── mcp-proxy/   MCP Proxy (Streamable HTTP :8290) [Phase 3]
+│   │   │   └── runbooks/ restart-service, clear-cache, disable-chaos, freeze-deploys
+│   │   ├── splunk-mock-mcp/ mock Splunk MCP backend (:8400) [Phase 4]
+│   │   └── datadog-mock-mcp/ mock Datadog MCP backend (:8401) [Phase 4]
+│   └── generate/        mesh services + load-gen
+│       ├── store/ customer/ order/ inventory/
+│       ├── invoice/ payment/ notification/
+│       └── load-gen/
+├── compose/       MCP Proxy (Streamable HTTP :8290) [Phase 3]
 │   │   └── runbooks/    runbook fns: restart-service, clear-cache, disable-chaos, freeze-deploys
 │   ├── splunk-mock-mcp/ mock Splunk MCP backend (:8400)  [Phase 4]
 │   ├── datadog-mock-mcp/ mock Datadog MCP backend (:8401) [Phase 4]
@@ -461,7 +464,7 @@ DevOpsOverSightAgent/
 | Directory | Role | Built in |
 |-----------|------|----------|
 | `architecture/` | Deep-dive architecture docs + sequence diagrams | Phase 0+ |
-| `generate/` | All Ballerina source: 7-service mesh, `load-gen`, MCP Proxy, mock MCPs, Ballerina agent | Phases 2–4 |
+| `code/` | All Ballerina source: `agent/` (DevOps agent), `mcp/` (MCP Proxy + 2 mock MCPs), `generate/` (7 mesh services + load-gen) | Phases 2–4 |
 | `compose/` | Docker Compose stack, OTel Collector config, Postgres init, env templates | Phase 1 (+2/3/4) |
 | `tests/` | Unit test runner, Docker integration test, Claude Code fix loop | Phases 2–4 |
 | `catalog/` | `services.yaml` — service catalog backing the MCP Proxy topology tools | Phase 3 |

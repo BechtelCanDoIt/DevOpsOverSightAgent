@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # runUnitTests.sh — bring up the infra `bal test` needs, run tests for every
-# Ballerina package under generate/, print a per-service results table, and
+# Ballerina package under code/, print a per-service results table, and
 # tear the infra back down.
 #
 # Why this script exists: each service's module-level Postgres/Redis/NATS
@@ -29,6 +29,16 @@ COMPOSE_FILE="compose/docker-compose.yml"
 INFRA_SERVICES=(postgres redis nats)
 ALL_SERVICES=(order payment inventory notification customer store invoice load-gen \
               agent mcp-proxy splunk-mock-mcp datadog-mock-mcp)
+
+# Map service name → package directory under the code/ layout.
+pkg_path() {
+  local svc="$1"
+  case "$svc" in
+    agent)                            echo "code/agent" ;;
+    mcp-proxy|splunk-mock-mcp|datadog-mock-mcp) echo "code/mcp/$svc" ;;
+    *)                                echo "code/generate/$svc" ;;
+  esac
+}
 
 # Allow narrowing to a subset of services via positional args.
 if [ "$#" -gt 0 ]; then
@@ -127,9 +137,9 @@ export REDIS_HOST=localhost
 export NATS_URL=nats://localhost:4222
 
 for svc in "${SERVICES[@]}"; do
-  pkg_dir="generate/$svc"
+  pkg_dir="$(pkg_path "$svc")"
   if [ ! -d "$pkg_dir" ]; then
-    printf '%s\t%s\n' "$svc" "MISSING (no generate/$svc/)" >> "$RESULTS_TSV"
+    printf '%s\t%s\n' "$svc" "MISSING ($pkg_dir/)" >> "$RESULTS_TSV"
     continue
   fi
   log="$LOG_DIR/$svc.log"

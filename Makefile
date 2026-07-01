@@ -1,7 +1,14 @@
 .DEFAULT_GOAL := help
 
 COMPOSE_FILE := compose/docker-compose.yml
-BAL_PACKAGES  := order payment inventory customer store invoice notification load-gen mcp-proxy splunk-mock-mcp datadog-mock-mcp agent
+
+# Explicit paths under the new code/ layout
+BAL_DIRS := \
+  code/agent \
+  code/mcp/mcp-proxy code/mcp/splunk-mock-mcp code/mcp/datadog-mock-mcp \
+  code/generate/store code/generate/customer code/generate/order \
+  code/generate/inventory code/generate/invoice code/generate/payment \
+  code/generate/notification code/generate/load-gen
 
 .PHONY: help demo-up demo-mock-up demo-down inject-chaos reset-chaos rehearse test-bal test-all mcp-inspect investigate test-proxy
 
@@ -47,13 +54,12 @@ rehearse: ## Full end-to-end demo rehearsal (compose/mock path)
 	@echo "==> Rehearsal complete. (Bonus: if AMP is up, review the agent trace at http://localhost:3000)"
 
 test-bal: ## Run bal test for all Ballerina packages
-	@for pkg in $(BAL_PACKAGES); do \
-		dir="generate/$$pkg"; \
+	@for dir in $(BAL_DIRS); do \
 		if [ -d "$$dir" ]; then \
-			echo "==> Testing $$pkg ..."; \
-			(cd "$$dir" && bal test) || echo "[FAIL] $$pkg"; \
+			echo "==> Testing $$dir ..."; \
+			(cd "$$dir" && bal test) || echo "[FAIL] $$dir"; \
 		else \
-			echo "[skip] $$pkg ($$dir not found)"; \
+			echo "[skip] $$dir (not found)"; \
 		fi; \
 	done
 
@@ -68,7 +74,7 @@ mcp-inspect: ## Launch MCP Inspector against the MCP Proxy (requires: mcp-proxy 
 	npx @modelcontextprotocol/inspector
 
 test-proxy: ## Integration test: proxy federation + routing (no LLM or SaaS creds needed)
-	bash tests/test-docker-configuration.sh
+	bash tests/runDockerConfigTests.sh
 
 investigate: ## Trigger a test investigation against payment-service (requires: demo-mock-up + ANTHROPIC_API_KEY in .env)
 	curl -s -X POST http://localhost:8092/investigate \

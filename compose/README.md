@@ -35,8 +35,8 @@ GIT_COMMIT=$(git rev-parse --short HEAD) docker compose -f compose/docker-compos
 | postgres | `postgres:16` | 5432 | DB-per-service via `postgres/init.sql` |
 | redis | `redis:7` | — | `inventory` cache (internal) |
 | nats | `nats:2.10` | — | `order → notification` bus (internal) |
-| store / customer / order / inventory / invoice / payment / notification | built from `../generate/<svc>` | 9091–9097 | `:9090` business+`/health`, `:9099` chaos (internal), `:9797` metrics |
-| load-gen | built from `../generate/load-gen` | — | drives traffic (`LOADGEN_PATTERN=baseline`) |
+| store / customer / order / inventory / invoice / payment / notification | built from `../code/generate/<svc>` | 9091–9097 | `:9090` business+`/health`, `:9099` chaos (internal), `:9797` metrics |
+| load-gen | built from `../code/generate/load-gen` | — | drives traffic (`LOADGEN_PATTERN=baseline`) |
 
 Optional profiles: `--profile dev` (Jaeger UI :16686), `--profile saas` (Datadog Agent — needs `DD_API_KEY`).
 

@@ -65,10 +65,10 @@ See [manualdemo.md](demo/manualdemo.md)
   This runs bal test across all 12 packages. You'll see pass/fail per package. Expected: 129 total passing.
 
   Individual packages:
-  cd generate/mcp-proxy && bal test        # 22 tests
-  cd generate/splunk-mock-mcp && bal test   # 8 tests
-  cd generate/datadog-mock-mcp && bal test  # 11 tests
-  cd generate/agent && bal test             # 8 tests
+  cd code/mcp/mcp-proxy && bal test        # 22 tests
+  cd code/mcp/splunk-mock-mcp && bal test   # 8 tests
+  cd code/mcp/datadog-mock-mcp && bal test  # 11 tests
+  cd code/agent && bal test             # 8 tests
 ```
 
   ---
@@ -166,7 +166,7 @@ make investigate
 |------|----------|
 | [`README.md`](README.md) · [`architecture.md`](architecture/architecture.md) · [`CLAUDE.md`](CLAUDE.md) | This file (component reference); deep-dive architecture; Claude Code guidance + locked decisions |
 | `todo/` | Authoritative phase specs (`phase-0` … `phase-5`) — start with [`todo/README.md`](todo/README.md) |
-| `generate/` | Ballerina source — one package per service + `load-gen` + `mcp-proxy` (MCP Proxy) + `agent` + two mock MCPs |
+| `code/` | Ballerina source — `agent/` (DevOps agent), `mcp/` (MCP Proxy + 2 mock MCPs), `generate/` (7 mesh services + `load-gen`) |
 | `compose/` | Docker Compose observability stack (Phase 1) |
 | `catalog/` | Service catalog YAML for the MCP Proxy (Phase 3) |
 | `demo/` | Demo script + chaos inject/reset scripts (Phase 5) |
@@ -191,7 +191,7 @@ For the deep dive — full topology diagrams, the telemetry fan-out, the trace-c
 
 ## MCP best practices
 
-The agent reaches every observability backend through **one MCP entry point — the MCP Proxy** (`mcp-proxy`, `:8290`, source in `generate/mcp-proxy/`). The proxy owns the topology, correlation, and runbook tools locally, federates the Splunk/Datadog MCP backends (connecting to them itself), and routes each namespaced tool call to the right origin by stripping its prefix. This federated-proxy shape is deliberate: it keeps the agent's context small, makes mock↔live a one-env-var swap on the proxy (never the agent), and gives a single place to apply routing, result, and guardrail policy. Lazy loading lives in the proxy too — it advertises only `discover_tools` + the topology tools in `tools/list`, keeps the Splunk/Datadog manifests in a server-side registry, and returns them on demand when the agent calls `discover_tools`. The agent seeds its context from the proxy's tool list and folds discovered manifests in as the investigation proceeds. See the flow diagrams in **[`architecture/sequence-overview.md`](architecture/sequence-overview.md)** (agent → proxy → backends) and **[`architecture/sequence-tool-routing.md`](architecture/sequence-tool-routing.md)** (registry lookup + prefix routing inside the proxy).
+The agent reaches every observability backend through **one MCP entry point — the MCP Proxy** (`mcp-proxy`, `:8290`, source in `code/mcp/mcp-proxy/`). The proxy owns the topology, correlation, and runbook tools locally, federates the Splunk/Datadog MCP backends (connecting to them itself), and routes each namespaced tool call to the right origin by stripping its prefix. This federated-proxy shape is deliberate: it keeps the agent's context small, makes mock↔live a one-env-var swap on the proxy (never the agent), and gives a single place to apply routing, result, and guardrail policy. Lazy loading lives in the proxy too — it advertises only `discover_tools` + the topology tools in `tools/list`, keeps the Splunk/Datadog manifests in a server-side registry, and returns them on demand when the agent calls `discover_tools`. The agent seeds its context from the proxy's tool list and folds discovered manifests in as the investigation proceeds. See the flow diagrams in **[`architecture/sequence-overview.md`](architecture/sequence-overview.md)** (agent → proxy → backends) and **[`architecture/sequence-tool-routing.md`](architecture/sequence-tool-routing.md)** (registry lookup + prefix routing inside the proxy).
 
 The full pattern catalog and rationale live in the **[`mcp best practices/`](mcp%20best%20practices/)** folder:
 
@@ -216,18 +216,18 @@ How this demo maps to each practice:
 
 ## Services
 
-Every service is a Ballerina package under `generate/<dir>/`; its OTel service name is `<dir>-service`. Every service exposes its business routes plus `GET /health` (probed by the Ballerina MCP) and a token-gated, internal-only `POST /chaos/latency | /chaos/error | /chaos/reset` lever set used by the Phase 5 demo to inject and clear the incident.
+Every service is a Ballerina package under `code/generate/<dir>/` (mesh) or `code/agent/`, `code/mcp/<server>/`; its OTel service name is `<dir>-service`. Every service exposes its business routes plus `GET /health` (probed by the Ballerina MCP) and a token-gated, internal-only `POST /chaos/latency | /chaos/error | /chaos/reset` lever set used by the Phase 5 demo to inject and clear the incident.
 
 | Service | Dir | Role | Talks to | Infra | Chaos modes |
 |---|---|---|---|---|---|
-| `store-service` | `generate/store/` | Storefront / catalog browse | `inventory`, Postgres | Postgres | latency, 500 |
-| `customer-service` | `generate/customer/` | Customer profiles / accounts | Postgres | Postgres | latency, 500 |
-| `order-service` | `generate/order/` | Front-door `POST /orders` orchestrator | `customer`, `inventory`, `payment`, `invoice`; NATS → `notification` | Postgres | DB slow query, 500 on validation |
-| `inventory-service` | `generate/inventory/` | Reserves stock | Redis, then Postgres on miss | Redis + Postgres | cold-cache latency spike |
-| `invoice-service` | `generate/invoice/` | Generates invoice / billing record | Postgres | Postgres | latency, 500 |
-| `payment-service` | `generate/payment/` | Charges card (mocked) | in-process `mock-bank` (dummy) | — | timeout, sporadic 502 (**headline demo**) |
-| `notification-service` | `generate/notification/` | Sends order confirmation | NATS subscriber (async) | NATS | slow consumer / backlog |
-| `load-gen` | `generate/load-gen/` | Traffic generator (driver, not a service) | all front-door services | — | n/a — it's the driver |
+| `store-service` | `code/generate/store/` | Storefront / catalog browse | `inventory`, Postgres | Postgres | latency, 500 |
+| `customer-service` | `code/generate/customer/` | Customer profiles / accounts | Postgres | Postgres | latency, 500 |
+| `order-service` | `code/generate/order/` | Front-door `POST /orders` orchestrator | `customer`, `inventory`, `payment`, `invoice`; NATS → `notification` | Postgres | DB slow query, 500 on validation |
+| `inventory-service` | `code/generate/inventory/` | Reserves stock | Redis, then Postgres on miss | Redis + Postgres | cold-cache latency spike |
+| `invoice-service` | `code/generate/invoice/` | Generates invoice / billing record | Postgres | Postgres | latency, 500 |
+| `payment-service` | `code/generate/payment/` | Charges card (mocked) | in-process `mock-bank` (dummy) | — | timeout, sporadic 502 (**headline demo**) |
+| `notification-service` | `code/generate/notification/` | Sends order confirmation | NATS subscriber (async) | NATS | slow consumer / backlog |
+| `load-gen` | `code/generate/load-gen/` | Traffic generator (driver, not a service) | all front-door services | — | n/a — it's the driver |
 
 **Chaos contract** (same on every service, internal network only, bearer-token gated):
 
@@ -242,7 +242,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **Dependencies:** calls `inventory-service` for stock; reads Postgres (its own schema).
 - **Infra:** Postgres.
 - **Failure / chaos modes:** injected latency, HTTP 500.
-- **Source:** `generate/store/`.
+- **Source:** `code/generate/store/`.
 
 ### customer-service
 
@@ -251,7 +251,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **Dependencies:** Postgres (its own schema). No downstream service calls.
 - **Infra:** Postgres.
 - **Failure / chaos modes:** injected latency, HTTP 500.
-- **Source:** `generate/customer/`.
+- **Source:** `code/generate/customer/`.
 
 ### order-service
 
@@ -261,7 +261,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **Infra:** Postgres; NATS (publisher).
 - **Failure / chaos modes:** DB slow query, HTTP 500 on validation.
 - **Note:** the `order → notification` NATS hop must carry explicit OTel trace context in the message envelope so the async leg stays part of one connected trace (HTTP propagation is automatic; NATS is not).
-- **Source:** `generate/order/`.
+- **Source:** `code/generate/order/`.
 
 ### inventory-service
 
@@ -270,7 +270,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **Dependencies:** reads Redis first, falls back to Postgres on a cache miss.
 - **Infra:** Redis (cache) + Postgres. Its Redis cache is the target of the `clear-cache` runbook (`FLUSHDB`).
 - **Failure / chaos modes:** cold-cache latency spike (cache miss → backend latency).
-- **Source:** `generate/inventory/`.
+- **Source:** `code/generate/inventory/`.
 
 ### invoice-service
 
@@ -279,7 +279,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **Dependencies:** Postgres (its own schema).
 - **Infra:** Postgres.
 - **Failure / chaos modes:** injected latency, HTTP 500.
-- **Source:** `generate/invoice/`.
+- **Source:** `code/generate/invoice/`.
 
 ### payment-service
 
@@ -288,7 +288,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **Dependencies:** none external — the `mock-bank` is simulated in-process. No database of its own.
 - **Infra:** none.
 - **Failure / chaos modes:** timeout, sporadic 502 — the demo injects ~30% 502 + 2s latency here to start the incident.
-- **Source:** `generate/payment/`.
+- **Source:** `code/generate/payment/`.
 
 ### notification-service
 
@@ -297,7 +297,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **Dependencies:** NATS subscriber — consumes order events published by `order-service`.
 - **Infra:** NATS.
 - **Failure / chaos modes:** slow consumer / backlog (drives the async-backlog diagnosis scenario).
-- **Source:** `generate/notification/`.
+- **Source:** `code/generate/notification/`.
 
 ### load-gen
 
@@ -305,7 +305,7 @@ Every service is a Ballerina package under `generate/<dir>/`; its OTel service n
 - **What it drives:** the five front-facing domains — `customer` (signup/lookup), `order` (`POST /orders` with varied SKUs + customer IDs), `invoice` (query/pay), `inventory` (stock check), `store` (catalog browse). `payment` and `notification` are exercised transitively through `order`.
 - **Config:** reads YAML pattern files — `baseline.yaml`, `spike.yaml`, `regression.yaml` — plus per-domain flow definitions; selects one via the `--pattern baseline|spike|regression` CLI arg. Runs as a long-lived compose container defaulting to `baseline`.
 - **Telemetry:** emits its own OTel spans so the generated load itself is visible in Datadog.
-- **Source:** `generate/load-gen/`.
+- **Source:** `code/generate/load-gen/`.
 
 ## Observability pipeline
 
@@ -334,7 +334,7 @@ The agent has a **single MCP entry point: the MCP Proxy** (`mcp-proxy`, `:8290`)
                                               ▼
                              ┌────────────────────────────┐
                              │        MCP Proxy :8290      │
-                             │   generate/mcp-proxy/      │
+                             │   code/mcp/mcp-proxy/      │
                              │                             │
                              │  topology · correlation     │
                              │  runbook executor           │
@@ -376,7 +376,7 @@ The agent has a **single MCP entry point: the MCP Proxy** (`mcp-proxy`, `:8290`)
 
 ### MCP Proxy (custom)
 
-The **single MCP entry point for the agent.** It owns the service catalog, dependency graph, cross-system correlation, and scoped runbook execution locally, and proxies Splunk/Datadog tool calls to the respective MCP backends. Built in Ballerina; runs over **Streamable HTTP on `:8290`** (HTTP/SSE fallback). Source lives in `generate/mcp-proxy/`; the agent connects via `BALLERINA_TOPOLOGY_MCP_URL`. OTel-instrumented so its outbound calls show up in Datadog alongside the mesh. See [`todo/phase-3-mcp.md`](todo/phase-3-mcp.md).
+The **single MCP entry point for the agent.** It owns the service catalog, dependency graph, cross-system correlation, and scoped runbook execution locally, and proxies Splunk/Datadog tool calls to the respective MCP backends. Built in Ballerina; runs over **Streamable HTTP on `:8290`** (HTTP/SSE fallback). Source lives in `code/mcp/mcp-proxy/`; the agent connects via `BALLERINA_TOPOLOGY_MCP_URL`. OTel-instrumented so its outbound calls show up in Datadog alongside the mesh. See [`todo/phase-3-mcp.md`](todo/phase-3-mcp.md).
 
 **Tool catalog** (names as seen by the agent — `topology__*` are pre-seeded in `tools/list`; `splunk__*`/`datadog__*` are revealed on demand via `discover_tools`):
 
@@ -410,10 +410,10 @@ The **single MCP entry point for the agent.** It owns the service catalog, depen
 
 ## Agent (client)
 
-The incident-response **Ballerina agent** (`generate/agent/`) runs under WSO2 Agent Manager on Kubernetes/kind. See [`todo/phase-4-agent.md`](todo/phase-4-agent.md).
+The incident-response **Ballerina agent** (`code/agent/`) runs under WSO2 Agent Manager on Kubernetes/kind. See [`todo/phase-4-agent.md`](todo/phase-4-agent.md).
 
-- **Framework / LLM:** Ballerina, native tool-use loop — no SDK required. LLM backend is configurable via `LLM_PROVIDER`: `ollama` (local, creds-free, default), `anthropic` (Anthropic Messages API), `openai` (OpenAI or any compatible endpoint), `amp` (WSO2 AMP AI gateway, OpenAI-compatible; AMP injects the endpoint URL). All logic is in `generate/agent/llm_client.bal`; `anthropic_client.bal` handles the Anthropic-specific response format. Packaged as a Docker image built from `generate/agent/Dockerfile`. OTel instrumentation is native (same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services).
-- **MCP wiring:** connects to the MCP Proxy (`:8290`) via `BALLERINA_TOPOLOGY_MCP_URL` using `generate/agent/mcp_client.bal`. The proxy handles routing to the Splunk and Datadog MCP backends — swapping to live vendor MCPs requires only changing `SPLUNK_MCP_URL` / `DATADOG_MCP_URL` on the proxy, with no agent changes.
+- **Framework / LLM:** Ballerina, native tool-use loop — no SDK required. LLM backend is configurable via `LLM_PROVIDER`: `ollama` (local, creds-free, default), `anthropic` (Anthropic Messages API), `openai` (OpenAI or any compatible endpoint), `amp` (WSO2 AMP AI gateway, OpenAI-compatible; AMP injects the endpoint URL). All logic is in `code/agent/llm_client.bal`; `anthropic_client.bal` handles the Anthropic-specific response format. Packaged as a Docker image built from `code/agent/Dockerfile`. OTel instrumentation is native (same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services).
+- **MCP wiring:** connects to the MCP Proxy (`:8290`) via `BALLERINA_TOPOLOGY_MCP_URL` using `code/agent/mcp_client.bal`. The proxy handles routing to the Splunk and Datadog MCP backends — swapping to live vendor MCPs requires only changing `SPLUNK_MCP_URL` / `DATADOG_MCP_URL` on the proxy, with no agent changes.
 - **Behavior / guardrail:** the system prompt drives a 10-step triage loop — monitors → metrics → trace → correlate → logs → blast radius → deploys → history → **propose a runbook before running it** → summarize. Topology tools are always in context; Splunk/Datadog tools are loaded on demand via `discover_tools` (lazy loading — scales to the real vendor MCPs which expose 50+ tools each). The **propose-before-act** guardrail is hard: the agent must call `list_runbooks` and present its choice for human approval *before* it may call `run_runbook`. Max turns (`30`) and model are configurable via env vars.
 - **Triggers:** `POST /investigate` (structured alert body) or `POST /webhook/alert` (Datadog webhook format) — both exposed on `:8080`. In the live demo, a **Datadog-monitor webhook** fires `POST /webhook/alert` automatically when the `payment-service` error rate exceeds threshold.
 - **Self-observability (the meta-win):** the agent's OTel spans flow through the same OTel Collector as the mesh — its reasoning trace, per-LLM-call latency, and tool-call durations are visible in Datadog alongside the workload it's diagnosing. The agent watches the workload; Datadog watches the agent.
@@ -446,8 +446,8 @@ Once the control plane is up, create a **Platform-Hosted** agent in `http://loca
 | Git Project | `https://github.com/BechtelCanDoIt/DevOpsOverSightAgent/tree/main` |
 | Display Name | `DevOps OverSight Agent` |
 | Description | AI agent that correlates Splunk logs and Datadog metrics to diagnose and remediate incidents in the retail mesh |
-| Build Context | `generate/agent` |
-| Dockerfile Path | `generate/agent/Dockerfile` |
+| Build Context | `code/agent` |
+| Dockerfile Path | `code/agent/Dockerfile` |
 | Exposed Port | `8080` |
 | Health Check Path | `/health` |
 

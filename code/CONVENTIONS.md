@@ -1,6 +1,6 @@
-# generate/ — Ballerina mesh conventions (Phase 2)
+# code/ — Ballerina source conventions (Phase 2)
 
-Every service package lives in `generate/<x>/` and maps to service name `<x>-service`
+Every mesh service package lives in `code/generate/<x>/` and maps to service name `<x>-service`
 (via `OTEL_SERVICE_NAME`). The Ballerina **package** is named `<x>_service` (hyphens
 are illegal in package names); the OTel Collector normalizes `_service` → `-service`,
 so the load-bearing `-service` name shows up in Datadog/Splunk.
@@ -121,7 +121,7 @@ Envelope published by `order` to subject `orders.created` (JSON):
 ## Build / verify gate (REQUIRED before you finish)
 
 ```bash
-cd generate/<x> && /Library/Ballerina/bin/bal build
+cd code/generate/<x> && /Library/Ballerina/bin/bal build
 ```
 Must end with `Generating executable / target/bin/<x>_service.jar` and **no ERRORs**. Fix only
 your business code — never the seeded kit. (Connectors are pre-cached; build is offline-fast.)

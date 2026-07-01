@@ -19,7 +19,7 @@
 
 ### 1.1 Repo layout
 - [x] Create `compose/` directory at the repo root (`DevOpsOverSightAgent/compose/`)
-- [x] `compose/docker-compose.yml` — main stack. Phase 2 adds the seven Ballerina services + `load-gen` (+ the Phase 3 `mcp-proxy`) here; their build contexts point at `../generate/<svc>`
+- [x] `compose/docker-compose.yml` — main stack. Phase 2 adds the seven Ballerina services + `load-gen` (+ the Phase 3 `mcp-proxy`) here; their build contexts point at `../code/generate/<svc>` (mesh), `../code/agent` (agent), `../code/mcp/<svc>` (MCP servers)
 - [x] `compose/.env` (gitignored) and `compose/.env.example` (committed) — Splunk HEC token, Datadog keys, etc.
 - [x] `compose/otel-collector/config.yaml` — OTLP receiver, Splunk HEC + Datadog exporters, batch processor
 - [x] `compose/postgres/init.sql` — create a schema/DB per backing service (`order`, `customer`, `invoice`, `store`) so a chaos-induced slow query in one doesn't muddy the others

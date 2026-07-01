@@ -1,6 +1,6 @@
 # Phase 2 — Ballerina service mesh + traffic generator
 
-**Goal:** build a realistic retail microservice mesh in Ballerina that emits traces, logs, and metrics via OTel so the observability stack from Phase 1 has something interesting to show. All source lives under `generate/`.
+**Goal:** build a realistic retail microservice mesh in Ballerina that emits traces, logs, and metrics via OTel so the observability stack from Phase 1 has something interesting to show. All source lives under `code/` (`agent/`, `mcp/`, `generate/` for mesh services).
 
 ## Why a mesh, not a single service
 
@@ -8,8 +8,8 @@ The whole demo turns on **correlation across services**. One service can demonst
 
 ## Layout & naming
 
-- All Ballerina source lives in `generate/` at the repo root — **one package per directory**, no `ballerina/` intermediate.
-- Directory `generate/<x>/` maps to service name `<x>-service` via `OTEL_SERVICE_NAME` (e.g. `generate/payment/` → `payment-service`). The `-service` suffix is load-bearing: Phases 3 & 5 reference `payment-service`, `inventory-service`, and `notification-service` by name.
+- All Ballerina source lives in `code/` at the repo root — mesh services under `code/generate/`, agent under `code/agent/`, MCP servers under `code/mcp/` — **one package per directory**, no `ballerina/` intermediate.
+- Directory `code/generate/<x>/` maps to service name `<x>-service` via `OTEL_SERVICE_NAME` (e.g. `code/generate/payment/` → `payment-service`). The `-service` suffix is load-bearing: Phases 3 & 5 reference `payment-service`, `inventory-service`, and `notification-service` by name.
 
 ## Services — hybrid mesh (7 services + load-gen)
 
@@ -17,14 +17,14 @@ The mesh keeps the four original spec services (`order, payment, inventory, noti
 
 | Service | Dir | Role | Talks to | Infra | Failure modes (for chaos) | Traffic-gen target |
 |---|---|---|---|---|---|---|
-| `store-service` | `generate/store/` | Storefront / catalog browse | `inventory`, Postgres | Postgres | latency, 500 | ✅ |
-| `customer-service` | `generate/customer/` | Customer profiles / accounts | Postgres | Postgres | latency, 500 | ✅ |
-| `order-service` | `generate/order/` | Front-door HTTP API: `POST /orders` | `customer`, `inventory`, `payment`, `invoice`; NATS → `notification` | Postgres | DB slow query, 500 on validation | ✅ |
-| `inventory-service` | `generate/inventory/` | Reserves stock | Redis, then Postgres on miss | Redis + Postgres | cold-cache latency spike | ✅ |
-| `invoice-service` | `generate/invoice/` | Generates invoice / billing record | Postgres | Postgres | latency, 500 | ✅ |
-| `payment-service` | `generate/payment/` | Charges card (mocked) | in-process **mock-bank** (dummy response — no real external call) | — | timeout, sporadic 502 (**headline demo**) | indirect |
-| `notification-service` | `generate/notification/` | Sends order confirmation | NATS subscriber | NATS | slow consumer / backlog | indirect |
-| `load-gen` | `generate/load-gen/` | Drives traffic; holds chaos one-liners | all front-door services | — | n/a — it's the driver | — |
+| `store-service` | `code/generate/store/` | Storefront / catalog browse | `inventory`, Postgres | Postgres | latency, 500 | ✅ |
+| `customer-service` | `code/generate/customer/` | Customer profiles / accounts | Postgres | Postgres | latency, 500 | ✅ |
+| `order-service` | `code/generate/order/` | Front-door HTTP API: `POST /orders` | `customer`, `inventory`, `payment`, `invoice`; NATS → `notification` | Postgres | DB slow query, 500 on validation | ✅ |
+| `inventory-service` | `code/generate/inventory/` | Reserves stock | Redis, then Postgres on miss | Redis + Postgres | cold-cache latency spike | ✅ |
+| `invoice-service` | `code/generate/invoice/` | Generates invoice / billing record | Postgres | Postgres | latency, 500 | ✅ |
+| `payment-service` | `code/generate/payment/` | Charges card (mocked) | in-process **mock-bank** (dummy response — no real external call) | — | timeout, sporadic 502 (**headline demo**) | indirect |
+| `notification-service` | `code/generate/notification/` | Sends order confirmation | NATS subscriber | NATS | slow consumer / backlog | indirect |
+| `load-gen` | `code/generate/load-gen/` | Drives traffic; holds chaos one-liners | all front-door services | — | n/a — it's the driver | — |
 
 ### Topology (Phase 3 `get_dependencies` must match this exactly)
 
@@ -42,12 +42,12 @@ store ─► inventory
 ## Tasks
 
 ### 2.1 Ballerina project layout
-- [X] All packages live under `generate/` (exists). All **eight** dirs present: `order`, `payment`, `inventory`, `customer`, `invoice`, `store`, `notification`, `load-gen`
+- [X] All mesh service packages live under `code/generate/` (exists). All **eight** dirs present: `order`, `payment`, `inventory`, `customer`, `invoice`, `store`, `notification`, `load-gen`
 - [X] One Ballerina package per service dir, each with `Ballerina.toml`, `Dockerfile`, and `*.bal` source
 - [X] Org slug renamed project-wide from old name → `devopspoc` (all `Ballerina.toml` + `Dependencies.toml`)
 - [X] Shared `Ballerina.toml` conventions: `observabilityIncluded = true`; OTel exporter endpoint via `Config.toml` / env (`OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317`)
 - [X] Each service has its own `Dockerfile` (two-stage build, base image's Java 21 runtime)
-- [X] Each service wired into `compose/docker-compose.yml` with build context `../generate/<svc>`
+- [X] Each service wired into `compose/docker-compose.yml` with build context `../code/generate/<svc>`
 
 ### 2.2 OTel instrumentation
 Ballerina's observability module emits OTel-format data natively. Per service:
@@ -59,7 +59,7 @@ Ballerina's observability module emits OTel-format data natively. Per service:
 - [ ] Confirm Ballerina SQL connector traces Postgres calls as child spans (verified once Phase 1 Splunk/Datadog smoke test is live)
 
 ### 2.3 Health endpoint
-- [X] Every service exposes `GET /health` on `:9090` returning `{status, service}` — pattern is part of the seeded kit (see `generate/CONVENTIONS.md` §"Listener & route conventions"). Phase 3's MCP `get_service_health(name)` probes this.
+- [X] Every service exposes `GET /health` on `:9090` returning `{status, service}` — pattern is part of the seeded kit (see `code/CONVENTIONS.md` §"Listener & route conventions"). Phase 3's MCP `get_service_health(name)` probes this.
 
 ### 2.4 Chaos toggles
 Implemented in the seeded `chaos.bal` (auth-token gated via `X-Chaos-Token`, internal-network-only `:9099` listener). Business handlers call `applyChaos()` at the top of each request.
@@ -71,8 +71,8 @@ Implemented in the seeded `chaos.bal` (auth-token gated via `X-Chaos-Token`, int
 These are the levers the Phase 5 demo script pulls to create the incident the agent will diagnose. The headline scenario targets `payment-service`.
 
 ### 2.5 Traffic generator
-`generate/load-gen/` is a small Ballerina worker, not a service. It drives the **five business domains** (`customer, order, invoice, inventory, store`):
-- [X] Reads a YAML pattern file: baseline RPS, ramp shape, spike windows (patterns live in `generate/load-gen/patterns/`)
+`code/generate/load-gen/` is a small Ballerina worker, not a service. It drives the **five business domains** (`customer, order, invoice, inventory, store`):
+- [X] Reads a YAML pattern file: baseline RPS, ramp shape, spike windows (patterns live in `code/generate/load-gen/patterns/`)
 - [X] Per-domain flow definitions — `customer` (signup/lookup), `order` (`POST /orders` with varied SKUs + customer IDs), `invoice` (query/pay), `inventory` (stock check), `store` (catalog browse)
 - [X] Realistic order payloads so the `order → customer/inventory/payment/invoice` fan-out and the `order → notification` NATS hop both light up
 - [X] Logs its own OTel spans so the load itself is visible in Datadog
@@ -100,14 +100,14 @@ Each package has a `tests/` directory with `@test:Config` functions in the same 
 
 | Service | Test file | Tests | Service refactor for testability |
 |---|---|---|---|
-| `order` | `generate/order/tests/order_service_test.bal` | 9 | extracted `buildTraceparent(traceId, spanId)` from inline NATS envelope construction |
-| `payment` | `generate/payment/tests/payment_service_test.bal` | 9 | none (target functions were already pure) |
-| `inventory` | `generate/inventory/tests/inventory_service_test.bal` | 8 | extracted `canReserve(current, qty)` from inline guard |
-| `notification` | `generate/notification/tests/notification_service_test.bal` | 12 | extracted `parseTraceparent(tp)` + `isLowerHex` from inline NATS envelope parsing |
-| `customer` | `generate/customer/tests/customer_service_test.bal` | 9 | added `buildCustomer`, `validateNewCustomer`, `isValidCustomerId` |
-| `store` | `generate/store/tests/store_service_test.bal` | 9 | extracted `buildProductDetail`, `skuValid` |
-| `invoice` | `generate/invoice/tests/invoice_service_test.bal` | 10 | added `validateNewInvoice`, `rowToInvoice`, `newIssuedInvoice` |
-| `load-gen` | `generate/load-gen/tests/load_gen_test.bal` | 14 | extracted `pickDomainAt(weights, randDecimal)` for deterministic testability |
+| `order` | `code/generate/order/tests/order_service_test.bal` | 9 | extracted `buildTraceparent(traceId, spanId)` from inline NATS envelope construction |
+| `payment` | `code/generate/payment/tests/payment_service_test.bal` | 9 | none (target functions were already pure) |
+| `inventory` | `code/generate/inventory/tests/inventory_service_test.bal` | 8 | extracted `canReserve(current, qty)` from inline guard |
+| `notification` | `code/generate/notification/tests/notification_service_test.bal` | 12 | extracted `parseTraceparent(tp)` + `isLowerHex` from inline NATS envelope parsing |
+| `customer` | `code/generate/customer/tests/customer_service_test.bal` | 9 | added `buildCustomer`, `validateNewCustomer`, `isValidCustomerId` |
+| `store` | `code/generate/store/tests/store_service_test.bal` | 9 | extracted `buildProductDetail`, `skuValid` |
+| `invoice` | `code/generate/invoice/tests/invoice_service_test.bal` | 10 | added `validateNewInvoice`, `rowToInvoice`, `newIssuedInvoice` |
+| `load-gen` | `code/generate/load-gen/tests/load_gen_test.bal` | 14 | extracted `pickDomainAt(weights, randDecimal)` for deterministic testability |
 
 **Total: 80 `@test:Config` functions across 8 packages.**
 
@@ -125,7 +125,7 @@ Each package has a `tests/` directory with `@test:Config` functions in the same 
 
 - **Eight Ballerina packages** (seven services + `load-gen`), each container-ready — ✅
 - A YAML pattern library: `baseline.yaml`, `spike.yaml`, `regression.yaml`, plus per-domain flow definitions — ✅
-- `generate/README.md` with `bal run` instructions per service for local dev outside compose — ✅
+- `code/generate/README.md` with `bal run` instructions per service for local dev outside compose — ✅
 - A `tests/` directory per package with `@test:Config` unit tests (80 functions total) — ✅
 - A working Datadog service map screenshot in the repo (proof of life) showing all seven services — ⏳ pending Phase 1 live creds
 

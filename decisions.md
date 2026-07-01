@@ -49,7 +49,7 @@ All architecture and tooling choices that Phases 1–5 depend on. Treat these as
 
 **Rationale:** Port `8290` was chosen to avoid conflicts with the mesh services (`8080–8087`) and the agent (`8000`/`8092`). `host.k3d.internal` is the hostname k3d registers in every pod to resolve back to the Docker host — the agent pod in k3d reaches the proxy in compose this way.
 
-**Source:** `generate/mcp-proxy/` (Ballerina package `mcp_proxy`).
+**Source:** `code/mcp/mcp-proxy/` (Ballerina package `mcp_proxy`).
 
 ---
 
@@ -63,7 +63,7 @@ All architecture and tooling choices that Phases 1–5 depend on. Treat these as
 
 ## D6 — Repo layout
 
-**Decision:** `DevOpsOverSightAgent/` is the GitHub push root. Ballerina source under `generate/` (one package per service, including the agent), phase specs under `todo/`, compose stack under `compose/`.
+**Decision:** `DevOpsOverSightAgent/` is the GitHub push root. Ballerina source under `code/` (`agent/`, `mcp/`, `generate/` for mesh services), phase specs under `todo/`, compose stack under `compose/`.
 
 ---
 

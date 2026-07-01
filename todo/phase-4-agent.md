@@ -10,16 +10,16 @@ Phase 0 originally planned Python for WSO2 Agent Manager auto-instrumentation. T
 
 | Package | Port | Purpose |
 |---|---|---|
-| `generate/agent/` | 8080 | DevOps agent — configurable LLM tool-use loop (ollama/anthropic/openai/amp) + HTTP trigger endpoints |
-| `generate/splunk-mock-mcp/` | 8400 | Mock Splunk MCP — mirrors Splunkbase app 7931 interface; used until real creds arrive |
-| `generate/datadog-mock-mcp/` | 8401 | Mock Datadog MCP — mirrors `mcp.datadoghq.com` interface; used until real creds arrive |
+| `code/agent/` | 8080 | DevOps agent — configurable LLM tool-use loop (ollama/anthropic/openai/amp) + HTTP trigger endpoints |
+| `code/mcp/splunk-mock-mcp/` | 8400 | Mock Splunk MCP — mirrors Splunkbase app 7931 interface; used until real creds arrive |
+| `code/mcp/datadog-mock-mcp/` | 8401 | Mock Datadog MCP — mirrors `mcp.datadoghq.com` interface; used until real creds arrive |
 
 The real Splunk and Datadog MCP URLs are injected at runtime via env vars; the mock servers are the default values. Swapping to live vendor MCPs requires only `.env` changes — no code changes.
 
 ## Tasks
 
 ### 4.1 Agent scaffold
-- [x] `generate/agent/` Ballerina package (`devopspoc/devops_oversight_agent`)
+- [x] `code/agent/` Ballerina package (`devopspoc/devops_oversight_agent`)
 - [x] `anthropic_client.bal` — Anthropic Messages API client; implements `runAgentLoop(apiKey, model, systemPrompt, userPrompt, tools, dispatcher, maxTurns)` with full tool-use loop (handles `tool_use` stop_reason, accumulates `tool_result` blocks, loops until `end_turn` or max turns)
 - [x] `llm_client.bal` — provider router + all non-Anthropic loops; `runConfiguredLlm` dispatches on `LLM_PROVIDER`; contains `runOllamaLoop` (Ollama `/api/chat`, args as JSON objects) and `runOpenAICompatLoop` (OpenAI + AMP `/v1/chat/completions`, args as JSON strings parsed via `value:fromJsonString`); four providers: `anthropic` (default), `ollama`, `openai`, `amp`
 - [x] `mcp_client.bal` — minimal MCP HTTP client; `mcpInitialize`, `mcpListTools`, `mcpCallTool` over JSON-RPC 2.0 POST to `/mcp`
@@ -32,15 +32,15 @@ The real Splunk and Datadog MCP URLs are injected at runtime via env vars; the m
 
 Two mock servers allow local development and end-to-end testing without live Splunk/Datadog accounts.
 
-#### Splunk mock MCP (`generate/splunk-mock-mcp/`, port 8400)
+#### Splunk mock MCP (`code/mcp/splunk-mock-mcp/`, port 8400)
 - [x] Implements the Splunkbase app 7931 tool interface: `splunk_run_query`, `splunk_get_indexes`, `splunk_get_knowledge_objects`, `splunk_list_saved_searches`, `splunk_preview_search`
 - [x] `mock_data.bal` returns realistic log data for the demo scenario — `payment-service` 502 errors with `trace_id` fields, latency spikes, normal baseline traffic
-- [x] 8 `@test:Config` tests passing (`generate/splunk-mock-mcp/tests/`)
+- [x] 8 `@test:Config` tests passing (`code/mcp/splunk-mock-mcp/tests/`)
 
-#### Datadog mock MCP (`generate/datadog-mock-mcp/`, port 8401)
+#### Datadog mock MCP (`code/mcp/datadog-mock-mcp/`, port 8401)
 - [x] Implements the `mcp.datadoghq.com` tool interface: `get_datadog_metric`, `search_datadog_metrics`, `search_datadog_error_tracking_issues`, `get_datadog_trace`, `apm_search_spans`, `search_datadog_logs`, `search_datadog_monitors`
 - [x] `mock_data.bal` returns a pre-built APM trace showing `order-service → payment-service` latency, a fired Datadog monitor for `payment-service` 502 rate, and matching log events
-- [x] 11 `@test:Config` tests passing (`generate/datadog-mock-mcp/tests/`)
+- [x] 11 `@test:Config` tests passing (`code/mcp/datadog-mock-mcp/tests/`)
 
 ### 4.3 MCP wiring — tool namespacing
 The agent connects to all three MCPs at startup, lists tools from each, and prefixes tool names with the server namespace (`splunk__`, `datadog__`, `topology__`). The dispatcher routes on the prefix:
@@ -69,14 +69,14 @@ MCP server URLs come from env vars with compose-internal defaults:
 - [ ] Datadog monitor configured in the SaaS console to fire the webhook when `payment-service` error rate exceeds threshold — blocked on `DD_API_KEY`
 
 ### 4.6 Docker Compose wiring
-- [x] `devops-oversight-agent` service in `compose/docker-compose.yml` — builds from `../generate/agent`, port mapped `8092:8000` (host 8092 avoids Colima AMP-VM port collision), health-checked on `/health`
+- [x] `devops-oversight-agent` service in `compose/docker-compose.yml` — builds from `../code/agent`, port mapped `8092:8000` (host 8092 avoids Colima AMP-VM port collision), health-checked on `/health`
 - [x] `splunk-mock-mcp` service — port `8400:8400`
 - [x] `datadog-mock-mcp` service — port `8401:8401`
 - [x] All three MCP URL env vars wired; switching to live vendors is a `.env` change only
 - [x] LLM backend env vars: `LLM_PROVIDER`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `ANTHROPIC_API_KEY`, `AGENT_MODEL`
 
 ### 4.7 Unit tests
-- [x] 8 `@test:Config` tests in `generate/agent/tests/agent_test.bal` — all passing
+- [x] 8 `@test:Config` tests in `code/agent/tests/agent_test.bal` — all passing
   - `buildInvestigationPrompt` includes service/severity/description/alertId
   - `SYSTEM_PROMPT` mentions all three MCPs and includes propose-before-act guardrail
   - `splitOnFirst` happy path, double separator, not-found error
@@ -100,9 +100,9 @@ Agent Manager's Python auto-instrumentation init container (`amp-python-instrume
 
 ## Deliverables
 
-- [x] `generate/agent/` — Ballerina agent package, builds clean, 8 unit tests passing
-- [x] `generate/splunk-mock-mcp/` — 5 tools, 8 tests passing
-- [x] `generate/datadog-mock-mcp/` — 7 tools, 11 tests passing
+- [x] `code/agent/` — Ballerina agent package, builds clean, 8 unit tests passing
+- [x] `code/mcp/splunk-mock-mcp/` — 5 tools, 8 tests passing
+- [x] `code/mcp/datadog-mock-mcp/` — 7 tools, 11 tests passing
 - [x] All three services wired into `compose/docker-compose.yml`
 - [ ] End-to-end investigation test: `POST /investigate` against the live mesh → agent calls all three MCPs, proposes `disable-chaos`, returns a coherent summary
 - [ ] A recorded agent trace in `amp-trace-observer` (if Agent Manager deployment done)

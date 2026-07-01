@@ -137,7 +137,7 @@ services:
   # Storefront / product catalog service. Handles browse and search; calls
   # inventory for stock checks. Chaos levers: latency, 500.
   store:
-    build: { context: ../generate/store, <<: *ballerina-build }
+    build: { context: ../code/generate/store, <<: *ballerina-build }
     image: devops-poc/store-service
     environment:
       <<: [*otel-env, *db-env]
@@ -155,7 +155,7 @@ services:
   # Customer profile service. Handles account lookup and registration; backed
   # by Postgres. Chaos levers: latency, 500.
   customer:
-    build: { context: ../generate/customer, <<: *ballerina-build }
+    build: { context: ../code/generate/customer, <<: *ballerina-build }
     image: devops-poc/customer-service
     environment:
       <<: [*otel-env, *db-env]
@@ -172,7 +172,7 @@ services:
   # charges via payment, issues invoice, and publishes a NATS notification.
   # Chaos levers: DB slow query, 500.
   order:
-    build: { context: ../generate/order, <<: *ballerina-build }
+    build: { context: ../code/generate/order, <<: *ballerina-build }
     image: devops-poc/order-service
     environment:
       <<: [*otel-env, *db-env]
@@ -198,7 +198,7 @@ services:
   # Stock reservation service with Redis-backed hot cache; cache misses fall
   # through to Postgres. Chaos levers: cache eviction latency spike.
   inventory:
-    build: { context: ../generate/inventory, <<: *ballerina-build }
+    build: { context: ../code/generate/inventory, <<: *ballerina-build }
     image: devops-poc/inventory-service
     environment:
       <<: [*otel-env, *db-env]
@@ -217,7 +217,7 @@ services:
   # Billing record generator. Creates invoice documents per order; backed by
   # Postgres. Chaos levers: latency, 500.
   invoice:
-    build: { context: ../generate/invoice, <<: *ballerina-build }
+    build: { context: ../code/generate/invoice, <<: *ballerina-build }
     image: devops-poc/invoice-service
     environment:
       <<: [*otel-env, *db-env]
@@ -233,7 +233,7 @@ services:
   # Mock payment processor — the headline demo chaos target. Chaos levers:
   # timeout and sporadic 502, which cascade through order and trigger the agent.
   payment:
-    build: { context: ../generate/payment, <<: *ballerina-build }
+    build: { context: ../code/generate/payment, <<: *ballerina-build }
     image: devops-poc/payment-service
     environment:
       <<: *otel-env
@@ -247,7 +247,7 @@ services:
   # Async order-confirmation sender. Subscribes to NATS; slow-consumer backlog
   # can be injected to demonstrate downstream impact. Chaos levers: backlog.
   notification:
-    build: { context: ../generate/notification, <<: *ballerina-build }
+    build: { context: ../code/generate/notification, <<: *ballerina-build }
     image: devops-poc/notification-service
     environment:
       <<: *otel-env
@@ -263,7 +263,7 @@ services:
   # Continuous traffic generator driving realistic retail workloads across all
   # front-door services. Controlled by LOADGEN_PATTERN (baseline, spike, etc.).
   load-gen:
-    build: { context: ../generate/load-gen, <<: *ballerina-build }
+    build: { context: ../code/generate/load-gen, <<: *ballerina-build }
     image: devops-poc/load-gen
     environment:
       <<: *otel-env
@@ -291,7 +291,7 @@ services:
   # SPLUNK_MCP_URL / DATADOG_MCP_URL to point at real SaaS MCPs when creds arrive.
   mcp-proxy:
     build:
-      context: ../generate/mcp-proxy
+      context: ../code/mcp/mcp-proxy
       <<: *ballerina-build
     image: devops-poc/mcp-proxy:latest
     environment:
@@ -320,7 +320,7 @@ services:
   # Replace by setting SPLUNK_MCP_URL on mcp-proxy to the real Splunk Cloud endpoint.
   splunk-mock-mcp:
     build:
-      context: ../generate/splunk-mock-mcp
+      context: ../code/mcp/splunk-mock-mcp
       <<: *ballerina-build
     image: devops-poc/splunk-mock-mcp:latest
     ports:
@@ -333,7 +333,7 @@ services:
   # Replace by setting DATADOG_MCP_URL on mcp-proxy to the real Datadog endpoint.
   datadog-mock-mcp:
     build:
-      context: ../generate/datadog-mock-mcp
+      context: ../code/mcp/datadog-mock-mcp
       <<: *ballerina-build
     image: devops-poc/datadog-mock-mcp:latest
     ports:
@@ -350,7 +350,7 @@ services:
   devops-oversight-agent:
     build:
       context: ../
-      dockerfile: generate/agent/Dockerfile
+      dockerfile: code/agent/Dockerfile
       <<: *ballerina-build
     image: devops-poc/devops-oversight-agent:latest
     environment:
