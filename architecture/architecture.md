@@ -15,7 +15,48 @@ runbook, and — after human approval — remediates and writes a postmortem.
 
 > This document is the deep-dive architecture reference. For component-by-component descriptions and
 > getting-started instructions, see the root [`README.md`](README.md). The authoritative
-> implementation specs are the phase docs under [`todo/`](todo/) (see [References](#12-references)).
+> implementation specs are the phase docs under [`todo/`](todo/) (see [References](#14-references)).
+
+---
+
+## Contents
+
+- [Architecture — DevOps Observability POC](#architecture--devops-observability-poc)
+  - [Contents](#contents)
+  - [1. System overview](#1-system-overview)
+  - [2. High-level architecture](#2-high-level-architecture)
+  - [3. Workload service mesh](#3-workload-service-mesh)
+    - [Topology](#topology)
+    - [Dependency table](#dependency-table)
+    - [Per-service common surface](#per-service-common-surface)
+    - [Traffic generator](#traffic-generator)
+  - [4. Observability \& telemetry pipeline](#4-observability--telemetry-pipeline)
+    - [Fan-out rationale](#fan-out-rationale)
+    - [Supporting components](#supporting-components)
+    - [The structured-log join key](#the-structured-log-join-key)
+  - [5. MCP \& agent tier](#5-mcp--agent-tier)
+    - [MCP Proxy and backends](#mcp-proxy-and-backends)
+    - [MCP Proxy tool catalog](#mcp-proxy-tool-catalog)
+    - [Tool-loading approach and scaling note](#tool-loading-approach-and-scaling-note)
+    - [Optional API Manager MCP Gateway](#optional-api-manager-mcp-gateway)
+    - [Agent self-observability (the meta-win)](#agent-self-observability-the-meta-win)
+  - [6. Cross-system correlation](#6-cross-system-correlation)
+    - [The 64-bit vs 128-bit trace-ID caveat](#the-64-bit-vs-128-bit-trace-id-caveat)
+  - [7. Incident-response flow (headline demo)](#7-incident-response-flow-headline-demo)
+  - [8. Trace-context propagation](#8-trace-context-propagation)
+  - [9. Key design decisions](#9-key-design-decisions)
+  - [10. Known gotchas \& risks](#10-known-gotchas--risks)
+  - [11. Repository layout](#11-repository-layout)
+  - [12. Single-agent + MCP Proxy vs. agent-to-agent (A2A)](#12-single-agent--mcp-proxy-vs-agent-to-agent-a2a)
+    - [The two topologies](#the-two-topologies)
+    - [Why the proxy wins *for this system*](#why-the-proxy-wins-for-this-system)
+    - [Where A2A *would* be right](#where-a2a-would-be-right)
+    - [The nuance: trust boundary ≠ reasoning boundary](#the-nuance-trust-boundary--reasoning-boundary)
+    - [Migration path is clean](#migration-path-is-clean)
+  - [13. Production architecture (enterprise — "ACME")](#13-production-architecture-enterprise--acme)
+    - [What changes from POC → production](#what-changes-from-poc--production)
+    - [What stays the same (the durable bets)](#what-stays-the-same-the-durable-bets)
+  - [14. References](#14-references)
 
 ---
 
@@ -471,7 +512,148 @@ DevOpsOverSightAgent/
 
 ---
 
-## 12. References
+## 12. Single-agent + MCP Proxy vs. agent-to-agent (A2A)
+
+**Decision:** one reasoning agent behind a single MCP Proxy that federates the backends — **not** a
+multi-agent / agent-to-agent topology. This section records *why*, because "why isn't this
+multi-agent?" is a question the design will be asked repeatedly.
+
+### The two topologies
+
+| | **Single-agent + proxy (chosen)** | **Agent-to-agent (A2A)** |
+|---|---|---|
+| Shape | One LLM loop; one MCP client; a proxy fans out to Splunk-MCP / Datadog-MCP / remediation-MCP | An orchestrator agent delegates to specialist agents (Splunk agent, Datadog agent, remediation agent), each its own LLM loop, coordinating over an agent protocol |
+| Splunk & Datadog signals | Live in **one reasoning context** | Live in **separate contexts**, serialized across an agent boundary |
+| Tools vs. peers | Backends are **tools** | Backends are **peers** |
+
+### Why the proxy wins *for this system*
+
+The differentiator here is **correlation** — joining a Splunk log line to a Datadog span to a
+topology edge. Correlation is a **convergent, single-context reasoning task**: the model must hold
+the log evidence and the metric evidence in the same working set to notice they share a `trace_id`
+at the same instant. Splitting Splunk and Datadog into separate agents puts that evidence in two
+contexts and forces each specialist to **summarize its findings into text** before the orchestrator
+can correlate — a lossy compression step inserted at exactly the wrong place. A2A would fragment the
+very thing the system exists to demonstrate.
+
+Two secondary costs reinforce the choice:
+
+- **Non-determinism compounds.** N agent loops = N× the places a run can wander. The existing
+  `maxTurns` sensitivity (§ agent config) becomes a cross-agent coordination-turns problem.
+- **Cost and latency multiply** by the agent count, and every handoff is another round trip — the
+  enemy of a repeatable 5-minute demo.
+
+The tell: **A2A pays off when work decomposes cleanly; this work converges** (many signals → one
+verdict). Convergent problems want one context.
+
+### Where A2A *would* be right
+
+Not never — just not here. A2A earns its complexity at **organizational boundaries** (different
+teams own and independently govern the Splunk vs. Datadog vs. remediation surfaces), under
+**tool-count explosion** (a single agent's tool list is hundreds of tools and selection degrades —
+this POC has ~11 topology tools + lazy-loaded backend tools), or when sub-problems are **genuinely
+independent** (parallel decomposition where sub-agents don't need each other's raw evidence). Those
+are enterprise-scale concerns — see §13.
+
+### The nuance: trust boundary ≠ reasoning boundary
+
+Note that Phase 3's [refactor R3.2](../todo/phase-3-mcp.md) splits *remediation* into its own gated
+MCP server. That is the **correct** kind of separation — a **trust boundary** isolating dangerous
+write actions behind their own auditable surface — while keeping all **diagnosis reasoning in one
+agent context**. It delivers the isolation/governance benefit people reach for A2A to get, without
+paying the correlation-fragmentation cost.
+
+### Migration path is clean
+
+Because everything is already MCP, outgrowing the POC into an org-boundary A2A design costs nothing
+in rework: a "Splunk agent" is just today's Splunk-MCP with a reasoning loop bolted on, and
+mainstream A2A protocols are largely MCP-shaped. Start with the proxy; earn the complexity later.
+
+---
+
+## 13. Production architecture (enterprise — "ACME")
+
+The POC is deliberately single-node and creds-light. This section sketches how the same design
+scales to a large regulated enterprise ("ACME"). The **core shape is preserved** — MCP is still the
+contract boundary, correlation still happens in one context, remediation is still a gated trust
+domain — but four things change decisively: **identity/governance become mandatory**, the
+**catalog becomes system-of-record-backed**, **remediation goes through change management**, and
+**A2A appears — but only at the org boundary**, wrapping the still-single correlation core.
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│  IDENTITY & GOVERNANCE PLANE                                                          │
+│  OIDC/SSO (e.g. Okta) · Vault/secrets-mgr · WSO2 Agent Manager (policy · quota ·      │
+│  audit · agent OTel) · model routing + fallback · PII/token redaction · eval harness  │
+└───────────────────────────────────┬────────────────────────────────────────────────┘
+                                     │ authenticates · governs · observes
+┌───────────────────────────────────▼────────────────────────────────────────────────┐
+│  AGENT PLANE   (Kubernetes · multi-AZ · autoscaled)                                   │
+│                                                                                       │
+│   Orchestrator / triage agent   ◄──── incident intake (event bus, below)              │
+│      │   keeps CORRELATION in ONE context (the POC core, unchanged)                   │
+│      │   delegates only domain-bounded, cleanly-separable work via A2A ──┐            │
+│      ├─ Splunk domain agent        (owned by the logging platform team)  │            │
+│      ├─ Datadog/APM domain agent   (owned by the observability team)     │ org        │
+│      └─ Change/remediation agent   (owned by SRE / platform ops)         │ boundary   │
+└───────────────────────────────────┬───────────────────────────────────────────────┘
+                                     │ EVERY tool call traverses ▼
+┌───────────────────────────────────▼────────────────────────────────────────────────┐
+│  MCP GATEWAY   (WSO2 API Manager) — mandatory single chokepoint                       │
+│  per-tool authN/Z · RBAC · rate-limit · quota · full audit trail · schema governance  │
+└───┬──────────────┬───────────────┬────────────────┬────────────────┬────────────────┘
+    │ READ         │ READ          │ READ           │ READ           │ WRITE (gated)
+┌───▼─────┐  ┌─────▼──────┐  ┌─────▼──────┐  ┌───────▼───────┐  ┌─────▼──────────────────┐
+│ Splunk  │  │  Datadog   │  │  CMDB /    │  │  Topology /   │  │  Remediation MCP        │
+│  MCP    │  │  MCP       │  │  ITSM MCP  │  │  correlation  │  │  (own trust domain)     │
+│(official│  │ (official) │  │(ServiceNow,│  │  MCP          │  │  GitOps/Argo · K8s API ·│
+│ SaaS)   │  │            │  │  CMDB)     │  │ (catalog from │  │  feature flags · change │
+└───┬─────┘  └─────┬──────┘  └─────┬──────┘  │  CMDB, not     │  │  tickets · runbooks     │
+    │              │               │         │  static map)  │  └─────┬───────────────────┘
+┌───▼──────────────▼───────────────▼─────────┴───────────────┐        │ actuates ONLY after
+│  ENTERPRISE SYSTEMS OF RECORD                               │        │ policy + human approval
+│  Splunk Enterprise/Cloud · Datadog org · CMDB · ITSM · Git  │        ▼
+└──────────────────────────────▲──────────────────────────────┘   Production workloads
+                               │ telemetry (OTel gateway + agent tiers)   (fleet · multi-region)
+                               └───────────────────────────────────────────────┘
+
+Intake & human-in-the-loop:  Datadog/Splunk alerts ─► event bus (Kafka) ─► orchestrator
+                             approvals & narration ─► ChatOps (Slack/Teams) + ITSM (ServiceNow)
+```
+
+### What changes from POC → production
+
+| Dimension | POC (today) | Production (ACME) |
+|-----------|-------------|-------------------|
+| **Service catalog** | Static in-code map (`catalog.bal`) | Live **CMDB / ServiceNow** behind a catalog MCP; topology discovered, not hardcoded |
+| **Identity & secrets** | Bearer tokens in env vars | **OIDC/SSO** for humans, workload identity for agents; secrets in **Vault**; no long-lived tokens |
+| **MCP Gateway** | Optional | **Mandatory** single chokepoint — per-tool RBAC, rate-limit, quota, full audit, schema governance |
+| **Remediation trust** | Propose-before-act gate; local runbooks | Separate remediation MCP in its **own trust domain**; actions flow through **GitOps/change tickets**; approval via ChatOps + ITSM with full change-management trail |
+| **Agent topology** | Single agent + proxy | Single correlation core **wrapped by** org-boundary A2A: domain agents owned by the teams that own each platform (the §12 "when A2A is right" case) |
+| **Intake** | Datadog webhook / CLI | Alert **event bus (Kafka)**; dedup, throttle, correlate multiple alerts into one incident |
+| **LLM** | `LLM_PROVIDER` env switch | **Model router** with fallback, cost controls, per-domain model choice; private/self-hosted models for sensitive data |
+| **HA / scale** | Single node | Multi-AZ Kubernetes, autoscaled agents, back-pressure on the gateway |
+| **Data governance** | Token scrubbing noted | Enforced **PII/secret redaction** before any signal reaches an LLM or trace store; data-residency-aware MCP routing |
+| **Quality** | Unit tests | **Eval + regression harness** on the typed diagnosis contract (§Phase 4) — accuracy gates before promotion |
+| **Audit & compliance** | In-memory audit log | Immutable, exportable audit of every tool call + every remediation, tied to SSO identity for SOX/regulatory review |
+
+### What stays the same (the durable bets)
+
+- **MCP is the contract boundary** — every capability is a tool; vendor swaps are config, not code.
+- **Correlation lives in one reasoning context** — even with A2A at the org boundary, the join is not
+  fragmented across agents (§12).
+- **Read/write are different trust tiers**, with remediation physically isolated behind its own gated
+  MCP (Phase 3 R3.1/R3.2).
+- **The typed diagnosis contract** (Phase 4) is what makes the enterprise eval, audit, and
+  approval-routing stories possible — structure over prose is load-bearing at scale.
+
+The through-line: **the POC is a faithful vertical slice of the production design, not a throwaway.**
+Everything added in production is a governance, scale, or systems-of-record concern layered *around*
+an unchanged core.
+
+---
+
+## 14. References
 
 - [`CLAUDE.md`](CLAUDE.md) — locked decisions, architecture summary, data flows, known gotchas
 - [`README.md`](README.md) — component catalog + getting-started

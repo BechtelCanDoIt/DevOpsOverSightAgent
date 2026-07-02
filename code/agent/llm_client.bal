@@ -138,7 +138,7 @@ function runOllamaLoop(
         log:printInfo("ollama ← response", turn = turn,
             inputTokens = inputTokens, outputTokens = outputTokens,
             totalTokens = inputTokens + outputTokens,
-            message = message.toJsonString());
+            payload = message.toJsonString());
         appendOllamaTokenCsv(model, turn, inputTokens, outputTokens);
 
         messages.push(message);
@@ -188,7 +188,7 @@ function appendOllamaTokenCsv(string model, int turn, int inputTokens, int outpu
         string row = string `${ts},${model},${turn},${inputTokens},${outputTokens},${inputTokens + outputTokens}\n`;
         check io:fileWriteString(csvPath, row, io:APPEND);
     } on fail error e {
-        log:printWarn("CSV write failed", path = csvPath, 'error = e.message());
+        log:printWarn("CSV write failed", path = csvPath, 'error = e);
     }
 }
 
