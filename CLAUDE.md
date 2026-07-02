@@ -15,7 +15,7 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 ## Source layout
 
 - `code/` — all Ballerina source, split into three sub-directories: `agent/` (DevOps OverSight agent), `mcp/` (MCP Proxy + splunk-mock-mcp + datadog-mock-mcp), and `generate/` (7 mesh services + load-gen).
-- `compose/` — Docker Compose stack (Phase 1) · `catalog/` — MCP service catalog (Phase 3) · `demo/` — demo scripts (Phase 5) · `todo/` — phase specs.
+- `compose/` — Docker Compose stack (Phase 1) · `demo/` — demo scripts (Phase 5) · `todo/` — phase specs.
 
 ## Locked Decisions (Phase 0 + override)
 

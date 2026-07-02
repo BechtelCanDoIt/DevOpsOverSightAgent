@@ -168,7 +168,6 @@ make investigate
 | `todo/` | Authoritative phase specs (`phase-0` … `phase-5`) — start with [`todo/README.md`](todo/README.md) |
 | `code/` | Ballerina source — `agent/` (DevOps agent), `mcp/` (MCP Proxy + 2 mock MCPs), `generate/` (7 mesh services + `load-gen`) |
 | `compose/` | Docker Compose observability stack (Phase 1) |
-| `catalog/` | Service catalog YAML for the MCP Proxy (Phase 3) |
 | `demo/` | Demo script + chaos inject/reset scripts (Phase 5) |
 
 ## Service mesh (7 services + load-gen)
@@ -404,7 +403,7 @@ The **single MCP entry point for the agent.** It owns the service catalog, depen
 | `disable-chaos` | call `POST /chaos/reset` on a target service (the demo's recovery lever) |
 | `freeze-deploys` | set a flag in a stub deploy registry |
 
-**Service catalog:** the source of truth is `catalog/services.yaml` — enumerates all seven mesh services with owner, slack channel, repo URL, runbook IDs, health endpoint, and declared dependencies. The dependency edges must match the Phase 2 topology exactly so `get_dependencies` returns the real graph (including the `order → notification` async edge).
+**Service catalog:** encoded as a static in-code map in `code/mcp/mcp-proxy/catalog.bal` — enumerates all seven mesh services with owner, slack channel, repo URL, runbook IDs, health endpoint, and declared dependencies. The dependency edges match the Phase 2 topology exactly so `get_dependencies` returns the real graph (including the `order → notification` async edge). Production would load from a real CMDB.
 
 **MCP Gateway (optional):** the MCP Proxy may be registered behind WSO2 API Manager's MCP Gateway. If used, auth is deferred to the gateway — but verify the gateway does **not** buffer SSE, or streaming `run_runbook` output breaks.
 

@@ -241,7 +241,7 @@ because it is Ballerina it can also *act* (hit chaos endpoints, restart containe
 | `disable-chaos` | Calls `/chaos/reset` on a target service — **most-used in the demo** |
 | `freeze-deploys` | Sets a flag in the stub deploy registry |
 
-The service catalog is a static YAML committed to the repo (`catalog/services.yaml`) enumerating all
+The service catalog is a static in-code map in `code/mcp/mcp-proxy/catalog.bal` enumerating all
 seven mesh services with `dependencies` matching the §3 topology; production would discover from a
 real CMDB.
 
@@ -387,7 +387,7 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 | Remediation safety | **Propose-before-act gate** | Agent must `list_runbooks` and present its choice; a human approves before `run_runbook`. |
 | Agent framework | **Ballerina (native HTTP + tool-use loop)** | Anthropic Messages API called directly; tool dispatch implemented in `code/agent/`; no SDK dependency. |
 | MCP transport | **Streamable HTTP (`:8290`)** | stdio does not work in K8s; the agent pod needs a network endpoint. |
-| Service catalog | **Static `catalog/services.yaml`** | Simple for a POC; production would read a real CMDB. |
+| Service catalog | **Static in-code map (`catalog.bal`)** | Simple for a POC; production would read a real CMDB. |
 | Log/metric routing | **Logs→Splunk, metrics→Datadog, traces→both** | Each backend owns its signal of record; traces dual-shipped to enable correlation. |
 
 ---
@@ -453,7 +453,6 @@ DevOpsOverSightAgent/
 │   ├── runDockerConfigTests.sh  creds-free integration test: proxy federation + routing
 │   ├── ralph-tests.sh           iterative Claude Code fix loop for unit test failures
 │   └── README.md                per-service unit test inventory
-├── catalog/             services.yaml — static service catalog (Phase 3)
 ├── demo/                demo orchestration (Phase 5)
 │   ├── script.md               verbatim narration + commands
 │   ├── inject-chaos.sh         starts the headline scenario (payment-service)
@@ -467,7 +466,6 @@ DevOpsOverSightAgent/
 | `code/` | All Ballerina source: `agent/` (DevOps agent), `mcp/` (MCP Proxy + 2 mock MCPs), `generate/` (7 mesh services + load-gen) | Phases 2–4 |
 | `compose/` | Docker Compose stack, OTel Collector config, Postgres init, env templates | Phase 1 (+2/3/4) |
 | `tests/` | Unit test runner, Docker integration test, Claude Code fix loop | Phases 2–4 |
-| `catalog/` | `services.yaml` — service catalog backing the MCP Proxy topology tools | Phase 3 |
 | `demo/` | Demo script, chaos-inject and reset scripts, recovery procedures | Phase 5 |
 | `todo/` | Phase specs — the authoritative implementation source of truth | reference |
 
