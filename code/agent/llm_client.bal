@@ -16,8 +16,10 @@
 // is provider-agnostic.
 
 import ballerina/http;
+import ballerina/io;
 import ballerina/lang.value;
 import ballerina/log;
+import ballerina/time;
 
 // ── Provider router ───────────────────────────────────────────────────────────
 
@@ -114,6 +116,8 @@ function runOllamaLoop(
             options: {num_ctx: 8192}
         };
 
+        log:printInfo("ollama → request", turn = turn, messages = messages.toJsonString());
+
         http:Response|error resp = ollama->post("/api/chat", requestBody);
         if resp is error {
             return error(string `Ollama API call failed: ${resp.message()}`);
@@ -124,6 +128,19 @@ function runOllamaLoop(
         }
 
         json message = check body.message;
+
+        int inputTokens = 0;
+        int outputTokens = 0;
+        json|error promptEval = body.prompt_eval_count;
+        json|error evalCount = body.eval_count;
+        if promptEval is int { inputTokens = promptEval; }
+        if evalCount is int { outputTokens = evalCount; }
+        log:printInfo("ollama ← response", turn = turn,
+            inputTokens = inputTokens, outputTokens = outputTokens,
+            totalTokens = inputTokens + outputTokens,
+            message = message.toJsonString());
+        appendOllamaTokenCsv(model, turn, inputTokens, outputTokens);
+
         messages.push(message);
 
         json|error toolCallsField = message.tool_calls;
@@ -148,6 +165,31 @@ function runOllamaLoop(
         }
     }
     return finalText;
+}
+
+// ── Ollama CSV telemetry ──────────────────────────────────────────────────────
+// Enabled via CSV_MCP_PROXY=TRUE. Each program run overwrites the header so
+// the file stays clean; subsequent turns within a run append rows.
+
+boolean csvHeaderWritten = false;
+
+function appendOllamaTokenCsv(string model, int turn, int inputTokens, int outputTokens) {
+    if envOr("CSV_MCP_PROXY", "FALSE").toUpperAscii() != "TRUE" {
+        return;
+    }
+    string csvPath = envOr("CSV_MCP_PROXY_PATH", "ollama_tokens_mcp_proxy.csv");
+    do {
+        if !csvHeaderWritten {
+            check io:fileWriteString(csvPath, "timestamp,model,turn,inputTokens,outputTokens,totalTokens\n");
+            csvHeaderWritten = true;
+        }
+        time:Utc now = time:utcNow();
+        string ts = time:utcToString(now);
+        string row = string `${ts},${model},${turn},${inputTokens},${outputTokens},${inputTokens + outputTokens}\n`;
+        check io:fileWriteString(csvPath, row, io:APPEND);
+    } on fail error e {
+        log:printWarn("CSV write failed", path = csvPath, 'error = e.message());
+    }
 }
 
 // ── LLM readiness checks ─────────────────────────────────────────────────────
