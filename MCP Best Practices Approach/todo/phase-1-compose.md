@@ -35,6 +35,7 @@ The Collector is the most architecturally important piece. Its config should:
 - [x] Include a `batch` processor and `memory_limiter` so it survives load tests
 - [x] `transform/servicename` processor: normalizes `_service` → `-service` (verified in smoke test)
 - **Note (macOS):** `filelog` receiver cannot tail `/var/lib/docker/containers` on Docker Desktop (files are inside the Alpine VM). Ballerina services ship logs via OTLP directly; filelog is deferred to Linux/k8s deployment.
+- [ ] **[filelog receiver]** The filelog receiver is configured in `config.yaml` and `config.saas.yaml` but is NOT wired into any pipeline (no `logs:` pipeline entry references it). On a Linux/k8s deployment, wire it into the logs pipeline so container stdout reaches Splunk alongside OTLP logs. This is a no-op on macOS Docker Desktop.
 
 ### 1.3 Datadog Agent
 - [x] Mount the Docker socket so the agent auto-discovers containers
@@ -59,7 +60,7 @@ Before declaring Phase 1 done:
 ## Pitfalls to flag now
 
 - **Splunk HEC token scope**: the trial's default HEC token may not have permission to create new indexes. Send to `main` unless you set up an index in advance.
-- **Datadog trace ID format**: Datadog historically used 64-bit trace IDs, OTel uses 128-bit. The Datadog exporter handles this but you'll see two trace IDs in the UI — `dd.trace_id` (64-bit) and `otel.trace_id` (128-bit). The agent's correlation logic needs to know which to use when joining Datadog ↔ Splunk.
+- **Datadog trace ID format**: Datadog historically used 64-bit trace IDs, OTel uses 128-bit. The Datadog exporter handles this but you'll see two trace IDs in the UI — `dd.trace_id` (64-bit) and `otel.trace_id` (128-bit). The agent's correlation logic needs to know which to use when joining Datadog ↔ Splunk. **This is not yet resolved** — `correlate_trace` currently substitutes the trace id verbatim into both links with no width normalization; the 64-bit vs 128-bit reconciliation (§6 of architecture.md) must be implemented before live-backend smoke tests. Track this in §1.2 above: during the live smoke test, record which form Datadog surfaces and confirm `correlate_trace` can find matching Splunk logs.
 - **Clock skew**: containers vs. SaaS endpoints — keep an eye on ingest delays during the smoke test.
 
 ## Deliverables

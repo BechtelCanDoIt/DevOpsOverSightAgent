@@ -69,10 +69,13 @@ Stub deploy log and incident history also live in `correlation.bal` — `find_re
 
 > Note: trace ID format (64-bit vs 128-bit Datadog) still needs confirmation during Phase 1 live smoke test.
 
+- [ ] **[trace-ID width reconciliation — required before live-backend wiring]** `correlate_trace` currently substitutes the supplied trace id verbatim into both the Datadog URL and the Splunk SPL with no 64-bit ↔ 128-bit normalization. Datadog surfaces both `dd.trace_id` (64-bit decimal or hex) and `otel.trace_id` (128-bit, 32-char hex); Splunk holds the 128-bit form. If the agent passes the 64-bit id to `correlate_trace`, the Splunk search will return zero results and the agent will wrongly conclude "no logs found." This is the most important correctness detail in the pipeline. Fix: inspect both id fields returned by `datadog__get_datadog_trace`, pass the 128-bit form to `correlate_trace` (or have `correlate_trace` accept both and normalize). Confirm the correct field name during Phase 1 live smoke test and lock the behavior here before declaring Phase 3 done against live backends.
+
 ### 3.4 Runbook execution
 - [x] Runbooks live in `runbooks.bal` (4 runbooks: `restart-service`, `clear-cache`, `disable-chaos`, `freeze-deploys`)
-- [ ] SSE streaming not implemented — runbooks return a `string[]` steps array instead (sufficient for demo; the agent renders each step as text)
+- [ ] **[SSE streaming not implemented]** Runbooks return a `string[]` steps array in a single JSON response instead of streaming via SSE. This is sufficient for the demo (the agent renders each step as text), but differs from the spec intent. If the MCP Gateway is wired in, verify it does not buffer the response anyway — if it does, the SSE design would have broken silently. Track here; promote to a real SSE response only if the demo narrative requires visible progress streaming.
 - [x] Audit log: every `run_runbook` call appends to an isolated in-memory `auditLog` via `appendAudit`; `getAuditLog()` exposed for inspection
+- [ ] **[audit log and deploy-freeze state are in-memory only]** Both the runbook audit log and the deploy-freeze flag are process-scoped (lost on restart). For the demo this is acceptable (short-lived stack). For production, these MUST be persisted to a durable store (a DB table, a file, or a dedicated remediation-MCP). Mark as a known non-durable shortcut; add a `persist-audit` task here if durability is required before shipping.
 
 ### 3.5 Auth
 - [ ] Bearer token check on every request (token in env var, same as Splunk/Datadog) — not yet implemented
@@ -85,11 +88,12 @@ Stub deploy log and incident history also live in `correlation.bal` — `find_re
 - [ ] Call `run_runbook("disable-chaos", { service: "payment-service" })`, confirm chaos resets
 
 ### 3.7 Unit tests
-- [x] 22 `@test:Config` tests written and passing (`code/mcp/mcp-proxy/tests/mcp_server_test.bal`)
+- [x] Tests written and passing (`code/mcp/mcp-proxy/tests/mcp_server_test.bal` + `tests/federation_test.bal`)
   - Catalog: lookup known/unknown, list count, dependency graph (downstream, upstream, both, leaf)
   - Correlation: Datadog URL format, custom site, SPL content, infer services
   - Deploy stub: find deploys for known/unknown service
   - Runbooks: list count, `disable-chaos` present, execute 4 runbooks, unknown runbook errors, audit log populated
+  - **Test count note:** this phase originally tracked "22 tests." A full `function test` grep across the mcp-proxy package now yields ~41 test functions (both test files combined), reflecting additions made during Phases 3–4 development. The "22" figure in `README.md`/`CLAUDE.md` is stale. Verify the actual count with `cd code/mcp/mcp-proxy && bal test` and update the README.
 
 ## Refactor R3 — architecture hardening (2026-07)
 

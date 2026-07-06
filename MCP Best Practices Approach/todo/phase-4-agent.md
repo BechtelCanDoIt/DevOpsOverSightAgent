@@ -61,7 +61,10 @@ MCP server URLs come from env vars with compose-internal defaults:
 - [x] Propose-before-act guardrail: agent must call `topology__list_runbooks`, explain its choice, then WAIT before calling `topology__run_runbook`
 - [x] `AGENT_MODEL` env var selects the Claude model for Anthropic backend (default `claude-sonnet-4-6`)
 - [x] `OLLAMA_MODEL` env var selects the Ollama model for Ollama backend (default `qwen3.5:9b`)
-- [x] `max_tokens: 8192`, `maxTurns: 20` — enough for a full 10-step investigation plus retries; configurable via env/Config.toml
+- [x] `max_tokens: 8192`, `maxTurns: 30` (bumped from 20; do NOT reduce below 25 — Ollama non-determinism plus `discover_tools` overhead can consume up to 25 turns) — configurable via env/Config.toml
+
+- [ ] **[propose-before-act is prompt-level only — no code gate]** The guardrail is enforced solely by the system prompt. There is no code-level interception preventing `run_runbook` from being called without a prior `list_runbooks` in the same session. A non-compliant model can bypass it. For production: add a hard gate in the tool-dispatch layer that tracks whether `list_runbooks` was called and approval received before allowing `run_runbook`; reject calls that arrive without that precondition. Acceptable for the demo (trusted-model path), but MUST be hardened before production use.
+- [ ] **[typed diagnosis output contract not yet implemented]** The agent's final output is a free-text `summary` string inside `{ status, alert_id, summary }`. Wording varies run-to-run, cannot be auto-validated, and makes the demo narrative non-deterministic. The R3 design review (Phase 3) called for a structured `DiagnosisResult` object: `{ incident_id, root_cause_service, hypothesis, confidence, evidence:[{source, type, trace_id?, url?, query?}], proposed_action:{runbook_id, params, tier}, status }`. Implement by: (a) defining the type, (b) enforcing it via a final structured tool call or structured-output schema in the LLM loop, (c) returning it alongside the narrative summary. Do this before adding more test scenarios — retrofitting a typed contract after prose-handling assumptions are baked in is significantly harder.
 
 ### 4.5 Trigger mechanism
 - [x] `POST /investigate` — structured `AlertRequest` body `{ service, severity, description, id }` — primary trigger for demo
@@ -76,11 +79,13 @@ MCP server URLs come from env vars with compose-internal defaults:
 - [x] LLM backend env vars: `LLM_PROVIDER`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `ANTHROPIC_API_KEY`, `AGENT_MODEL`
 
 ### 4.7 Unit tests
-- [x] 8 `@test:Config` tests in `code/agent/tests/agent_test.bal` — all passing
+- [x] Tests in `code/agent/tests/agent_test.bal` — all passing
   - `buildInvestigationPrompt` includes service/severity/description/alertId
   - `SYSTEM_PROMPT` mentions all three MCPs and includes propose-before-act guardrail
   - `splitOnFirst` happy path, double separator, not-found error
   - `envOrCfg` fallback
+  - **Test count note:** this phase originally tracked "8 tests." A full `function test` grep of the agent package now yields ~12 test functions. The "8" figure in `README.md`/`CLAUDE.md` is stale — verify with `cd code/agent && bal test` and update the README.
+- [ ] **[propose-before-act not test-covered]** No test currently asserts that the agent code rejects a `run_runbook` call made without a prior `list_runbooks`. Add a unit test once the code-level gate (§4.4 above) is implemented.
 
 ### 4.8 WSO2 Agent Manager deployment (optional — not blocking for demo)
 Agent Manager's Python auto-instrumentation init container (`amp-python-instrumentation-provider`) does not apply to Ballerina. Ballerina's `observabilityIncluded = true` flag provides equivalent OTel traces natively. Agent Manager can still host the Ballerina agent container if desired.
@@ -95,12 +100,12 @@ Agent Manager's Python auto-instrumentation init container (`amp-python-instrume
 
 - **MCP init failures are non-fatal**: if a mock MCP is down at startup, the agent logs a warning and continues with the tools from the remaining servers. The investigation will degrade gracefully rather than crashing.
 - **Tool name collisions**: if Splunk and Datadog both expose a tool called `search_logs`, the prefix namespace (`splunk__` vs `datadog__`) prevents collision. Anthropic tool names must be unique across the full list.
-- **Max tokens vs max turns**: the agent loop exits on `end_turn` or after 20 turns. A very detailed investigation (many tool calls) may require increasing `max_tokens` or `maxTurns`.
+- **Max tokens vs max turns**: the agent loop exits on `end_turn` or after `maxTurns` turns (currently 30; do not reduce below 25). If an investigation hits the limit it returns "Investigation incomplete — max turns reached"; retry once before switching providers. A very detailed investigation may require increasing `max_tokens` or `maxTurns`.
 - **Swapping to live vendor MCPs**: Datadog MCP (`mcp.datadoghq.com`) uses OAuth or API+APP key headers — the mock uses a bearer token. The `mcp_client.bal` auth header will need to be parameterized when switching.
 
 ## Deliverables
 
-- [x] `code/agent/` — Ballerina agent package, builds clean, 8 unit tests passing
+- [x] `code/agent/` — Ballerina agent package, builds clean, unit tests passing (see §4.7 for current count)
 - [x] `code/mcp/splunk-mock-mcp/` — 5 tools, 8 tests passing
 - [x] `code/mcp/datadog-mock-mcp/` — 7 tools, 11 tests passing
 - [x] All three services wired into `compose/docker-compose.yml`

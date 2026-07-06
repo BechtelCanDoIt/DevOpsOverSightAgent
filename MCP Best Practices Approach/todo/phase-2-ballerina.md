@@ -109,10 +109,11 @@ Each package has a `tests/` directory with `@test:Config` functions in the same 
 | `invoice` | `code/generate/invoice/tests/invoice_service_test.bal` | 10 | added `validateNewInvoice`, `rowToInvoice`, `newIssuedInvoice` |
 | `load-gen` | `code/generate/load-gen/tests/load_gen_test.bal` | 14 | extracted `pickDomainAt(weights, randDecimal)` for deterministic testability |
 
-**Total: 80 `@test:Config` functions across 8 packages.**
+**Total: 80 `@test:Config` functions across 8 packages** (the overall stack total is higher — see note below).
 
 - [x] Tests written
 - [x] `bal test` per package — 80/80 passing across all 8 packages (2201.13.3). Required making infra clients non-crashing when offline: changed `final X = check new(...)` → `final X|error = new(...)` and wrapped `init()` in `do{} on fail{}`. Module-level variables require local copies before type-narrowing (Ballerina doesn't narrow module-level vars); `@nats:ServiceConfig` can't annotate a var, so notification uses `Listener.attach(svc, subject)` instead.
+- **Test count note:** the 80 here is the mesh-only baseline and remains correct. The stack-wide "129 total" cited in `README.md` and `CLAUDE.md` is stale — a full `function test` grep across all 12 packages yields ~152 test functions (mcp-proxy grew from 22→41, agent grew from 8→12 as phases progressed). Update the README/CLAUDE.md reference to "~152 tests" or verify with `make test-bal` and record the actual count.
 
 ## Pitfalls
 

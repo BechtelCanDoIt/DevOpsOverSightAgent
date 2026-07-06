@@ -64,6 +64,8 @@ Why bother? Because the live demo audience always asks "can it do anything else?
 - [x] All `.env.example` files complete
 - [x] `docker compose down -v && docker compose up -d` works from a clean machine in under 5 minutes
 - [x] `Makefile` with `make demo-up`, `make demo-mock-up`, `make demo-down`, `make rehearse`
+- [ ] **[stale test counts in README/CLAUDE.md]** README.md and CLAUDE.md cite "129 total" and per-package counts ("22 proxy tests", "8 agent tests") that no longer match the code. Run `make test-bal`, record the actual pass count from the footer of each `bal test` run, and update those docs. Current best estimate from source analysis: ~152 test functions across 12 packages (mesh 80, mcp-proxy ~41, agent ~12, mocks 19).
+- [ ] **[open hardening items from technical-requirements analysis]** Before declaring the demo production-grade, the following implementation gaps (tracked in phases 3 and 4) must be resolved: (1) propose-before-act code-level gate, (2) typed `DiagnosisResult` output contract, (3) trace-ID width reconciliation in `correlate_trace`, (4) SSE vs synchronous steps decision for `run_runbook`, (5) audit-log and deploy-freeze durability. Each is acceptable as-is for the POC demo but is a known gap for any follow-on production work.
 
 ## Deliverables
 

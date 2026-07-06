@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__github-issues__github_search_issues",
+      "mcp__github-issues__github_get_issue_detail",
+      "mcp__servicenow__get_case",
+      "mcp__wso2-docs__search_wso2_docs",
+      "mcp__knowledge-base__search_kb",
+      "mcp__knowledge-base__get_article",
+      "mcp__product-env__list_products",
+      "Bash(docker info)",
+      "Bash(docker info *)",
+      "Bash(docker port *)"
+    ]
+  }
+}
