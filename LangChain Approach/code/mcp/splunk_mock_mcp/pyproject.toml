@@ -1,0 +1,22 @@
+[project]
+name = "splunk-mock-mcp"
+version = "0.1.0"
+description = "splunk-mock-mcp: FastMCP streamable-http mock of the Splunk MCP server (:8400)"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.9,<2",
+    "uvicorn>=0.34",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "respx>=0.22"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["splunk_mock_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

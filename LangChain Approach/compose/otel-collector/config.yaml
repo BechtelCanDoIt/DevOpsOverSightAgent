@@ -1,0 +1,60 @@
+# OpenTelemetry Collector — single telemetry shipper for the LangChain stack.
+#
+# Creds-free default: every pipeline exports to `debug`, so `docker compose up`
+# works with no Splunk/Datadog accounts. Confirm the mesh + agents are emitting:
+#     docker compose -f compose/docker-compose.yml logs -f otel-collector
+#
+# For the real fan-out (traces -> Datadog + Splunk, logs -> Splunk, metrics ->
+# Datadog) use the docker-compose.saas.yml overlay + config.saas.yaml.
+#
+# Deliberate deviations from the Ballerina stack (see architecture.md):
+#   - No `prometheus` receiver — the Python services push metrics via OTLP.
+#   - No `filelog` receiver — logs ship through the OTLP logs pipeline.
+#   - No `transform/servicename` — the Python SDK sets service.name correctly.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: demo-langchain
+        action: upsert
+      - key: service.namespace
+        value: devops-poc-py
+        action: upsert
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]

@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["generate", "mcp", "agent"]
+
+[tool.uv.workspace]
+members = [
+    "generate/mesh_common",
+    "generate/customer",
+    "generate/inventory",
+    "generate/invoice",
+    "generate/order",
+    "generate/payment",
+    "generate/store",
+    "generate/notification",
+    "generate/load_gen",
+    "mcp/splunk_mock_mcp",
+    "mcp/datadog_mock_mcp",
+    "agent/oversight_common",
+    "agent/devops_oversight_agent",
+    "agent/datadog_agent",
+    "agent/splunk_agent",
+]

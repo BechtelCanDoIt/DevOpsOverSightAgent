@@ -1,0 +1,357 @@
+# DevOps Observability POC — LangChain/A2A stack (workload + observability + agents).
+#
+# Default `docker compose up -d` starts the 7-service FastAPI mesh, load-gen,
+# supporting infra (Postgres, Redis, NATS), the OTel Collector, the two mock MCP
+# servers, the two A2A specialist agents, and the orchestrator. No SaaS creds
+# required — the Collector exports to `debug` (otel-collector/config.yaml).
+#
+# Host ports are 1-PREFIXED so this runs side-by-side with the Ballerina stack.
+# Container ports are unchanged (mesh 9090/9099, mocks 8400/8401, agents
+# 8101/8102, orchestrator 8000, OTLP 4317/4318).
+#
+# Optional profiles:
+#   --profile dev    adds Jaeger (local trace UI on host :26686)
+#   --profile saas   adds the Datadog Agent sidecar (needs DD_API_KEY)
+
+name: devops-poc-py
+
+networks:
+  devops-poc-py:
+    driver: bridge
+
+volumes:
+  pgdata-py:
+
+# ── reusable fragments ──────────────────────────────────────────────────────
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_RESOURCE_ATTRIBUTES: "service.namespace=devops-poc-py,deployment.environment=demo-langchain"
+  CHAOS_TOKEN: ${CHAOS_TOKEN:-dev-chaos-token}
+
+x-db-env: &db-env
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_USER: poc
+  DB_PASSWORD: ${POSTGRES_PASSWORD:-pocpass}
+
+x-llm-env: &llm-env
+  LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_URL: ${ANTHROPIC_URL:-}
+  AGENT_MODEL: ${AGENT_MODEL:-claude-sonnet-4-6}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-gpt-4o}
+  CSV_MCP_PROXY: ${CSV_MCP_PROXY:-FALSE}
+  CSV_MCP_PROXY_PATH: ${CSV_MCP_PROXY_PATH:-ollama_tokens_mcp_proxy.csv}
+
+x-mesh-health: &mesh-health
+  test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9090/health').status==200 else 1)\""]
+  interval: 10s
+  timeout: 5s
+  retries: 10
+
+services:
+  # ── Observability + infra ──────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "14317:4317"   # OTLP gRPC
+      - "14318:4318"   # OTLP HTTP
+    networks: [devops-poc-py]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: poc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pocpass}
+    volumes:
+      - pgdata-py:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "15432:5432"
+    networks: [devops-poc-py]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"
+    networks: [devops-poc-py]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "14222:4222"
+      - "18222:8222"
+    networks: [devops-poc-py]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    profiles: [dev]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "26686:16686"
+    networks: [devops-poc-py]
+    restart: unless-stopped
+
+  dd-agent:
+    image: gcr.io/datadoghq/agent:7
+    profiles: [saas]
+    environment:
+      DD_API_KEY: ${DD_API_KEY}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_APM_ENABLED: "true"
+      DD_APM_NON_LOCAL_TRAFFIC: "true"
+      DD_LOGS_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [devops-poc-py]
+    restart: unless-stopped
+
+  # ── Mesh: 7 services + load-gen ─────────────────────────────────────────────
+  # Service names are the reachable hostnames on :9099, so the orchestrator's
+  # disable-chaos runbook (POST http://<service>:9099/chaos/reset) works.
+  store-service:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: store-service, MODULE: store_service.app } }
+    image: devops-poc-py/store-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: store-service
+      DB_NAME: storedb
+      INVENTORY_URL: http://inventory-service:9090
+    ports: ["19091:9090", "19191:9099"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+      inventory-service: { condition: service_started }
+    networks: [devops-poc-py]
+    healthcheck: *mesh-health
+    restart: unless-stopped
+
+  customer-service:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: customer-service, MODULE: customer_service.app } }
+    image: devops-poc-py/customer-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: customer-service
+      DB_NAME: customerdb
+    ports: ["19092:9090", "19192:9099"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+    networks: [devops-poc-py]
+    healthcheck: *mesh-health
+    restart: unless-stopped
+
+  order-service:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: order-service, MODULE: order_service.app } }
+    image: devops-poc-py/order-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: order-service
+      DB_NAME: orderdb
+      CUSTOMER_URL: http://customer-service:9090
+      INVENTORY_URL: http://inventory-service:9090
+      PAYMENT_URL: http://payment-service:9090
+      INVOICE_URL: http://invoice-service:9090
+      NATS_URL: nats://nats:4222
+    ports: ["19093:9090", "19193:9099"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      customer-service: { condition: service_started }
+      inventory-service: { condition: service_started }
+      payment-service: { condition: service_started }
+      invoice-service: { condition: service_started }
+    networks: [devops-poc-py]
+    healthcheck: *mesh-health
+    restart: unless-stopped
+
+  inventory-service:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: inventory-service, MODULE: inventory_service.app } }
+    image: devops-poc-py/inventory-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: inventory-service
+      DB_NAME: inventorydb
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports: ["19094:9090", "19194:9099"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [devops-poc-py]
+    healthcheck: *mesh-health
+    restart: unless-stopped
+
+  invoice-service:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: invoice-service, MODULE: invoice_service.app } }
+    image: devops-poc-py/invoice-service
+    environment:
+      <<: [*otel-env, *db-env]
+      OTEL_SERVICE_NAME: invoice-service
+      DB_NAME: invoicedb
+    ports: ["19095:9090", "19195:9099"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      postgres: { condition: service_healthy }
+    networks: [devops-poc-py]
+    healthcheck: *mesh-health
+    restart: unless-stopped
+
+  payment-service:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: payment-service, MODULE: payment_service.app } }
+    image: devops-poc-py/payment-service
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: payment-service
+    ports: ["19096:9090", "19196:9099"]
+    depends_on:
+      otel-collector: { condition: service_started }
+    networks: [devops-poc-py]
+    healthcheck: *mesh-health
+    restart: unless-stopped
+
+  notification-service:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: notification-service, MODULE: notification_service.app } }
+    image: devops-poc-py/notification-service
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: notification-service
+      NATS_URL: nats://nats:4222
+    ports: ["19097:9090", "19197:9099"]
+    depends_on:
+      otel-collector: { condition: service_started }
+      nats: { condition: service_healthy }
+    networks: [devops-poc-py]
+    healthcheck: *mesh-health
+    restart: unless-stopped
+
+  load-gen:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: load-gen, MODULE: load_gen.main } }
+    image: devops-poc-py/load-gen
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: load-gen
+      LOADGEN_PATTERN: ${LOADGEN_PATTERN:-baseline}
+      STORE_URL: http://store-service:9090
+      CUSTOMER_URL: http://customer-service:9090
+      ORDER_URL: http://order-service:9090
+      INVENTORY_URL: http://inventory-service:9090
+      INVOICE_URL: http://invoice-service:9090
+    depends_on:
+      store-service: { condition: service_started }
+      customer-service: { condition: service_started }
+      order-service: { condition: service_started }
+      inventory-service: { condition: service_started }
+      invoice-service: { condition: service_started }
+    networks: [devops-poc-py]
+    restart: unless-stopped
+
+  # ── Mock MCP servers ────────────────────────────────────────────────────────
+  splunk-mock-mcp:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: splunk-mock-mcp, MODULE: splunk_mock_mcp.server } }
+    image: devops-poc-py/splunk-mock-mcp
+    ports: ["18400:8400"]
+    networks: [devops-poc-py]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8400/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  datadog-mock-mcp:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: datadog-mock-mcp, MODULE: datadog_mock_mcp.server } }
+    image: devops-poc-py/datadog-mock-mcp
+    ports: ["18401:8401"]
+    networks: [devops-poc-py]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8401/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ── A2A specialist agents ─────────────────────────────────────────────────
+  datadog-agent:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: datadog-agent, MODULE: datadog_agent } }
+    image: devops-poc-py/datadog-agent
+    environment:
+      <<: [*otel-env, *llm-env]
+      OTEL_SERVICE_NAME: datadog-agent
+      DATADOG_AGENT_URL: http://datadog-agent:8101
+      DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401/mcp}
+    ports: ["18101:8101"]
+    networks: [devops-poc-py]
+    depends_on:
+      datadog-mock-mcp: { condition: service_healthy }
+    restart: unless-stopped
+
+  splunk-agent:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: splunk-agent, MODULE: splunk_agent } }
+    image: devops-poc-py/splunk-agent
+    environment:
+      <<: [*otel-env, *llm-env]
+      OTEL_SERVICE_NAME: splunk-agent
+      SPLUNK_AGENT_URL: http://splunk-agent:8102
+      SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400/mcp}
+    ports: ["18102:8102"]
+    networks: [devops-poc-py]
+    depends_on:
+      splunk-mock-mcp: { condition: service_healthy }
+    restart: unless-stopped
+
+  # ── Orchestrator ─────────────────────────────────────────────────────────
+  devops-oversight-agent:
+    build: { context: ../code, dockerfile: Dockerfile, args: { PACKAGE: devops-oversight-agent, MODULE: devops_oversight_agent.main } }
+    image: devops-poc-py/devops-oversight-agent
+    environment:
+      <<: [*otel-env, *llm-env]
+      OTEL_SERVICE_NAME: devops-oversight-agent
+      DATADOG_AGENT_URL: http://datadog-agent:8101
+      SPLUNK_AGENT_URL: http://splunk-agent:8102
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      SPLUNK_URL: ${SPLUNK_URL:-https://your-splunk.splunkcloud.com}
+    ports: ["18092:8000"]
+    networks: [devops-poc-py]
+    depends_on:
+      - datadog-agent
+      - splunk-agent
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped

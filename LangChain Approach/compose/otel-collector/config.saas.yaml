@@ -1,0 +1,64 @@
+# SaaS variant — real fan-out to Datadog + Splunk. Activated by the
+# docker-compose.saas.yml overlay. Requires creds in compose/.env:
+#   DD_API_KEY, DD_SITE, SPLUNK_HEC_TOKEN, SPLUNK_HEC_URL, SPLUNK_INDEX
+#
+# Fan-out (architecture.md §4): traces -> Datadog + Splunk, logs -> Splunk (HEC),
+# metrics -> Datadog. Same OTLP-only receivers as the debug config.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: demo-langchain
+        action: upsert
+      - key: service.namespace
+        value: devops-poc-py
+        action: upsert
+
+exporters:
+  debug:
+    verbosity: normal
+  datadog:
+    api:
+      key: ${env:DD_API_KEY}
+      site: ${env:DD_SITE}
+  splunk_hec:
+    token: ${env:SPLUNK_HEC_TOKEN}
+    endpoint: ${env:SPLUNK_HEC_URL}
+    source: otel-collector
+    index: ${env:SPLUNK_INDEX}
+    tls:
+      insecure_skip_verify: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, datadog, splunk_hec]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, datadog]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, splunk_hec]

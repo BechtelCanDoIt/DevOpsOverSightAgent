@@ -1,0 +1,22 @@
+# SaaS overlay — real fan-out to Datadog + Splunk.
+#
+#   docker compose -f compose/docker-compose.yml -f compose/docker-compose.saas.yml \
+#     --profile saas up -d
+#
+# Swaps the Collector to config.saas.yaml (datadog + splunk_hec exporters) and
+# passes the creds through. Requires DD_API_KEY, DD_SITE, SPLUNK_HEC_TOKEN,
+# SPLUNK_HEC_URL, SPLUNK_INDEX in compose/.env. The --profile saas flag also
+# starts the dd-agent sidecar defined in the base file.
+
+name: devops-poc-py
+
+services:
+  otel-collector:
+    volumes:
+      - ./otel-collector/config.saas.yaml:/etc/otel/config.yaml:ro
+    environment:
+      DD_API_KEY: ${DD_API_KEY}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN}
+      SPLUNK_HEC_URL: ${SPLUNK_HEC_URL}
+      SPLUNK_INDEX: ${SPLUNK_INDEX:-main}

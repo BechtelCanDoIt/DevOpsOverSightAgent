@@ -1,0 +1,14 @@
+# Steady, healthy traffic — the 10-minute "no errors in Datadog" baseline
+# (todo/phase-2-ballerina.md exit criteria). durationSeconds: 0 = run forever.
+name: baseline
+baseRps: 5
+workers: 4
+durationSeconds: 0
+# Relative weights across the five front-facing domains (payment + notification
+# are exercised transitively through order).
+weights:
+  store: 30
+  customer: 15
+  inventory: 25
+  invoice: 10
+  order: 20
