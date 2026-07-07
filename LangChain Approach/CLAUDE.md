@@ -28,7 +28,7 @@ This is the **LangChain-native Python** implementation of the **DevOps Observabi
 - **MCP:** official `mcp` SDK. Mocks are FastMCP streamable-HTTP servers at `/mcp`; agents use named `DataDogMCPClient`/`SplunkMCPClient` classes over `langchain-mcp-adapters`. No MCP Proxy, no `discover_tools` — low-context is achieved by agent decomposition (each sub-agent owns only its platform's tools).
 - **LLM:** configurable via `LLM_PROVIDER` env var — all providers in `code/agent/oversight_common/llm_factory.py`:
   - `anthropic` (default) — `ChatAnthropic`; AMP proxy via `ANTHROPIC_URL`; requires `ANTHROPIC_API_KEY`; model via `AGENT_MODEL` (default `claude-sonnet-4-6`, parity with the Ballerina stack)
-  - `ollama` — `ChatOllama`; creds-free; default model `qwen3.5:9b` at `OLLAMA_BASE_URL`
+  - `ollama` — `ChatOllama`; creds-free; default model `qwen2.5:14b-instruct` at `OLLAMA_BASE_URL` (the qwen2.5 family is the most reliable open tool-caller at this size; qwen3.5:9b works but stalls on long protocols)
   - `openai` — `ChatOpenAI`; override endpoint with `OPENAI_BASE_URL`; requires `OPENAI_API_KEY`
   - `amp` — WSO2 AMP AI gateway (OpenAI-compatible); AMP injects `LLM_BASE_URL` + optional `LLM_API_KEY`; set `LLM_MODEL`
 - **Telemetry:** OTel Python SDK, OTLP push to this stack's own Collector (`14317`/`14318` on the host). Deliberate deviations from the Ballerina stack: OTLP-push metrics (no Prometheus :9797 scrape), OTLP logs pipeline (no filelog receiver).

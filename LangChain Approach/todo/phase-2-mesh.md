@@ -24,5 +24,5 @@ mesh, emitting traces/logs/metrics and exposing the chaos API.
 ## Exit criteria
 
 - [x] `uv run pytest generate` green; every module imports as `__main__`.
-- [ ] (On a Docker host) all 7 `/health` UP; an order confirms end-to-end and
+- [x] (On a Docker host) all 7 `/health` UP; an order confirms end-to-end and
       the notification log carries the order's trace_id.

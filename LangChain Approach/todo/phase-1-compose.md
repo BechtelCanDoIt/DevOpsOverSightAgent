@@ -20,5 +20,5 @@
 
 - [x] `docker compose -f compose/docker-compose.yml config` validates.
 - [x] SaaS overlay validates.
-- [ ] `make demo-up` then `make logs` shows OTLP spans/logs/metrics in the
+- [x] `make demo-up` then `make logs` shows OTLP spans/logs/metrics in the
       collector debug output (run on a Docker host).

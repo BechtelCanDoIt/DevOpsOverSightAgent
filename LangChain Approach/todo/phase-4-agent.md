@@ -27,6 +27,6 @@ propose-before-act gate.
 ## Exit criteria
 
 - [x] `uv run pytest agent` green, incl. the A2A round-trip and the gate tests.
-- [ ] (On a Docker host, with an LLM) `POST /investigate` touches both specialists
+- [x] (On a Docker host, with an LLM) `POST /investigate` touches both specialists
       and topology tools and ends in a disable-chaos proposal (never auto-run);
       approving via `/chat` resets the chaos.

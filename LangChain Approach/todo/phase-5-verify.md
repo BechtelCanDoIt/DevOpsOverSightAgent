@@ -19,6 +19,6 @@ can stand it up.
 
 - [x] Both compose files validate; scripts pass `bash -n`.
 - [x] `./tests/runUnitTests.sh` green (~250 tests).
-- [ ] (On a Docker host) `make rehearse` drives inject → investigate → approve →
+- [x] (On a Docker host) `make rehearse` drives inject → investigate → approve →
       reset; one OTel trace spans the flow.
-- [ ] A colleague can `make demo-up` and run the demo from `demo/script.md`.
+- [x] A colleague can `make demo-up` and run the demo from `demo/script.md`.

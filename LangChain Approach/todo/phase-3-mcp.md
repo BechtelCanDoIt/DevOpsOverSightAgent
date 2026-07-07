@@ -20,5 +20,5 @@ tool-level faithful to the Ballerina mocks.
 ## Exit criteria
 
 - [x] `uv run pytest mcp` green; both servers import and register exactly 4 / 8 tools.
-- [ ] (On a Docker host) an MCP client `tools/list` returns the tool sets and
+- [x] (On a Docker host) an MCP client `tools/list` returns the tool sets and
       `splunk_run_query("payment 502")` returns the demo-trace events.
