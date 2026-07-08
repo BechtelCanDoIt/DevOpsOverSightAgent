@@ -1,0 +1,16 @@
+# Keep local dev cruft out of the build context (context root = code/).
+# The big one: a local `uv sync` here creates a ~166 MB code/.venv that would
+# otherwise be COPYed into every image, then thrown away by `uv sync`.
+.venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.gitignore
+.DS_Store

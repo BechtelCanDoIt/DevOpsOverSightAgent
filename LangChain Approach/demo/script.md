@@ -110,7 +110,14 @@ curl -s -o /dev/null -w "charge -> HTTP %{http_code}\n" -X POST http://localhost
 # expect HTTP 201
 ```
 
-Ask for a postmortem: `curl -s -X POST http://localhost:18092/chat -d '{"message":"give me a 3-line postmortem","sessionId":"inv-XXXX..."}'`
+Ask for a postmortem (same sessionId):
+
+```bash
+# The `Content-Type: application/json` header is required — without it curl sends
+# form-encoding and the API returns a 422 validation error.
+curl -s -X POST http://localhost:18092/chat -H 'Content-Type: application/json' \
+  -d '{"message":"give me a 3-line postmortem","sessionId":"inv-XXXX..."}' | python3 -m json.tool
+```
 
 **Belt-and-suspenders reset:** `make reset-chaos`.
 
