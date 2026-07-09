@@ -15,7 +15,7 @@ the shared **Level 0** architecture and the two reference solutions
 ## Audience & framing (as scoped)
 
 - **Internal only** — FDE team + leadership. (No separate client cut yet; derive one later from this master.)
-- **Scorecard, no verdict** — slide 41 is the honest side-by-side; slide 42 (**Recommendation**) is a deliberate **PLACEHOLDER** with a decision aid. Fill in the verdict with the client's actual team & governance context before showing anyone.
+- **Scorecard + measured verdict** — slide 41 is the honest qualitative side-by-side; slide 42 (**Recommendation**) is backed by a real A/B benchmark (identical `qwen2.5:14b-instruct` on Ollama, **18 runs each = 3 datasets × 6**). Headline: on the local model **LangChain won both axes** — faster (~62s vs ~78s median time-to-proposal) and **~2× more reliable** (61% vs 28% correct-proposal rate; Ballerina hit 0/6 in one dataset). This overturned the architecture-first prediction (which favored Ballerina on both). Both are still sub-production on a local model → use a cloud model for demo/prod. Raw per-run data in [`measured-ab-results.csv`](measured-ab-results.csv); harness in [`generator/measure.sh`](generator/measure.sh). The final verdict still weighs client team/governance context on top of these numbers.
 - **WSO2-branded** — orange (`#FF7300`) on a clean light theme; dark section dividers.
 - **Deep dive** — ~48 slides, per-slide speaker notes / talk track.
 

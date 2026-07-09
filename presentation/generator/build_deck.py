@@ -1157,34 +1157,35 @@ Here's the honest side-by-side — and per our plan, I'm NOT going to hand you a
 
 
 def slide_recommendation(prs):
-    s = D.content_slide(prs, "Comparison", "Recommendation")
-    # placeholder banner
-    panel(s, M, BT + 0.1, CW, 0.9, fill=D.ORANGE_LT, line=D.ORANGE)
-    tb, tf = textbox(s, M + 0.3, BT + 0.1, CW - 0.6, 0.9, anchor=MSO_ANCHOR.MIDDLE)
-    para(tf, "◆  PLACEHOLDER — to complete together after the scorecard discussion", first=True,
-         size=14, color=D.ORANGE_DK, bold=True, align=PP_ALIGN.CENTER)
-    # decision helper
-    cwid = (CW - 0.4) / 2
-    y = BT + 1.3
-    panel(s, M, y, cwid, 3.2, fill=D.TEAL_LT, line=D.TEAL)
-    card_header(s, M + 0.22, y + 0.25, cwid - 0.44, "Lean Ballerina + Proxy if…", accent=D.TEAL_DK)
-    bullets(s, M + 0.3, y + 0.78, cwid - 0.6, 2.3, [
-        {"text": "You're standardizing on WSO2 AMP as the agent platform.", "bc": D.TEAL},
-        {"text": "You want the fewest moving parts to operate and audit.", "bc": D.TEAL},
-        {"text": "Single-context correlation fidelity is paramount.", "bc": D.TEAL},
-        {"text": "A niche language is acceptable for a small platform team.", "bc": D.TEAL},
-    ], size=11.5, gap=9)
-    x2 = M + cwid + 0.4
-    panel(s, x2, y, cwid, 3.2, fill=D.VIOLET_LT, line=D.VIOLET)
-    card_header(s, x2 + 0.22, y + 0.25, cwid - 0.44, "Lean LangChain + A2A if…", accent=D.VIOLET_DK)
-    bullets(s, x2 + 0.3, y + 0.78, cwid - 0.6, 2.3, [
-        {"text": "Your teams already live in Python / LangChain.", "bc": D.VIOLET},
-        {"text": "A code-enforced approval gate is a compliance must-have.", "bc": D.VIOLET},
-        {"text": "You expect many platforms / trust domains (A2A scales out).", "bc": D.VIOLET},
-        {"text": "You're comfortable operating a distributed agent system.", "bc": D.VIOLET},
-    ], size=11.5, gap=9)
+    s = D.content_slide(prs, "Comparison · measured A/B — 18 runs", "Recommendation — measured, not guessed")
+    G, A = D.GREEN, D.AMBER
+    data = [
+        ["Metric  —  qwen2.5:14b local · 18 runs (3 datasets × 6)", "LangChain + A2A", "Ballerina + MCP Proxy"],
+        ["Correct-proposal rate", {"text": "11 / 18  (61%)", "color": G, "bold": True}, {"text": "5 / 18  (28%)", "color": A}],
+        ["Reliability by dataset", {"text": "4/6 · 3/6 · 4/6", "color": G, "bold": True}, {"text": "3/6 · 2/6 · 0/6", "color": A}],
+        ["Median time-to-proposal *", {"text": "~62 s", "color": G, "bold": True}, {"text": "~78 s", "color": A}],
+        ["LLM calls / investigation *", {"text": "~19", "color": D.INK}, {"text": "~9", "color": G, "bold": True}],
+        ["Cost per LLM call *", {"text": "~3 s  (small contexts)", "color": G, "bold": True}, {"text": "~9 s  (one big context)", "color": D.INK}],
+    ]
+    make_table(s, M, BT + 0.0, CW, [0.36, 0.32, 0.32], data, header_fill=D.INK,
+               first_col_bold=True, row_h=0.36, header_h=0.42, fsize=10.5, hsize=10.5)
+    tb, tf = textbox(s, M, BT + 2.3, CW, 0.26, anchor=MSO_ANCHOR.TOP)
+    para(tf, "* valid runs only — failed runs bailed out faster but produced no proposal, so timing them would flatter the loser.",
+         first=True, size=8.5, color=D.GRAY)
+    # verdict panel
+    vy = BT + 2.62
+    panel(s, M, vy, CW, 1.98, fill=D.PANEL, line=D.LINE)
+    card_header(s, M + 0.22, vy + 0.18, CW - 0.44, "What the data says — both my architecture-first predictions were wrong", accent=D.ORANGE)
+    bullets(s, M + 0.3, vy + 0.62, CW - 0.6, 1.3, [
+        {"lead": "Faster = LangChain", "text": "(62 vs 78 s median). I'd predicted Ballerina (fewer calls) — but its ~9 calls are each ~3× heavier (one big, growing context), losing to LangChain's more-but-cheaper calls on small decomposed contexts.", "bc": D.ORANGE},
+        {"lead": "More reliable = LangChain, ~2×", "text": "(61% vs 28%; Ballerina went 0/6 in one dataset). Opposite my guess too: decomposing into short sub-tasks keeps the 14B on-track better than one long single-agent protocol + discover_tools overhead.", "bc": D.ORANGE},
+        {"lead": "Caveat + what still stands", "text": "Both are sub-production on a local model → use a cloud model for demo/prod. Qualitative edges unchanged: Ballerina = fewer parts + WSO2-native; LangChain = code-level gate + Python familiarity.", "bc": D.ORANGE},
+    ], size=9.5, gap=4, spacing=1.04)
+    tb, tf = textbox(s, M, vy + 2.08, CW, 0.4, anchor=MSO_ANCHOR.TOP)
+    para(tf, "Method: identical qwen2.5:14b-instruct on Ollama; 3 datasets × 6 measured runs each (warm-up discarded per dataset); stacks run sequentially, never concurrent; mock MCP backends; same chaos + payload. Latency via curl, LLM calls via the Ollama access log.",
+         first=True, size=8, color=D.GRAY, spacing=1.12)
     notes(s, """
-This slide is intentionally blank on the verdict — you asked to keep the recommendation open until we've talked through the scorecard as a team, and with the client's context in the room. What I've put here is a decision aid, not a decision: the conditions under which each approach is the right call. Lean Ballerina-plus-proxy if you're standardizing on WSO2's agent platform, you want minimal moving parts, and correlation fidelity is paramount. Lean LangChain-plus-A2A if your teams already live in Python, a code-enforced gate is a hard compliance requirement, or you foresee many trust domains where A2A's fan-out is an advantage. When we fill in the verdict, it should reference the client's actual team and governance posture — that's the missing input, not anything technical.
+This slide is filled in with real measurement — 18 runs per stack, three datasets of six — and I want to be transparent that the data corrected me on BOTH of my architecture-first predictions. I'd said Ballerina would be faster and more reliable. On the creds-free local model, qwen2.5:14b, the opposite held. Faster: LangChain, ~62-second median time-to-proposal versus ~78 for Ballerina. The reason is the interesting part — Ballerina makes about half as many LLM calls (nine versus nineteen), but each is roughly three times heavier because the single agent carries one large, growing context (the ten-step protocol plus every lazy-loaded tool schema), while LangChain's decomposed agents each keep a small context, so their calls are cheap even though there are more of them. More reliable: also LangChain, and clearly — 61 percent correct-proposal rate versus 28 percent, with Ballerina producing ZERO valid runs in one entire dataset. That flips my 'single agent = more reliable' intuition: decomposing into short, focused sub-tasks keeps a weak model on-track far better than driving one long single-agent protocol with discover_tools overhead, where the 14B tends to declare victory early after correlating a trace. The honest headline for the room: on the local model LangChain won both axes — but both are still sub-production reliability, so for a real demo use a cloud model, where both should climb toward the high 90s and the gap may change. The qualitative scorecard trade-offs are unchanged, so the final verdict still weighs the client's team and governance context — now on top of measured runtime, not my inference.
 """)
     return s
 

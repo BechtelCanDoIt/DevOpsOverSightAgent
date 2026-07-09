@@ -7,7 +7,7 @@ FROM ballerina/ballerina:2201.13.3 AS build
 USER root
 ENV HOME=/home/ballerina
 WORKDIR /build
-COPY generate/agent/ .
+COPY code/agent/ .
 RUN JAVA_OPTS="-Duser.home=/home/ballerina" bal build
 
 FROM ballerina/ballerina:2201.13.3
