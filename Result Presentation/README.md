@@ -8,7 +8,7 @@ consistent at two different altitudes.
 
 | File | What it is |
 |------|-----------|
-| `DevOps-OverSight-Agent-POC-Review.pptx` / `.pdf` | **Deep dive (48 slides).** FDE team + engineering leadership. Full architecture, both solutions in detail, measured A/B results. |
+| `DevOps-OverSight-Agent-POC-Technical-Review.pptx` / `.pdf` | **Deep dive (48 slides).** FDE team + engineering leadership. Full architecture, both solutions in detail, measured A/B results. |
 | `DevOps-OverSight-Agent-Executive-Overview.pptx` / `.pdf` | **Executive overview (15 slides).** CEO/COO/CTO-level. Business framing, simplified architecture, the workflow cycle, and the headline measured numbers. |
 | `generator/build_deck.py` | Builds the deep-dive deck. |
 | `generator/build_exec_deck.py` | Builds the executive deck. |
@@ -19,7 +19,7 @@ consistent at two different altitudes.
 
 ## Executive Overview (15 slides)
 
-Built for a CEO/COO/CTO audience — no ports, no tool names, no jargon. Structure:
+Built for a CxO audience — no ports, no tool names, no jargon. Structure:
 title → executive summary → the business problem → what it is / how it works
 (intro) → **the workflow cycle** (Detect → Investigate → Diagnose → Suggest a
 runbook → **Approve** → Remediate & Recover) → a divider framing the two
