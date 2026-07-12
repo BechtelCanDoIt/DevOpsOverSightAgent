@@ -2,8 +2,8 @@
 # Run datasets 2 & 3 for both stacks, sequentially, one stack fully before the
 # next. Ballerina is expected UP at start; LangChain is brought up after.
 set -u
-SP="/private/tmp/claude-501/-Users-scottbechtel-dev-clients-f-fidelity-demo-DevOpsAgent/d10bbda5-749f-47a9-a888-a77e86575709/scratchpad"
-ROOT="/Users/scottbechtel/dev/clients/f/fidelity/demo/DevOpsAgent"
+SP="$SP"
+ROOT="$ROOT"
 CSV="$SP/ab_multi.csv"; BODIES="$SP/bodies"; MEAS="$SP/measure.sh"
 
 warm() { curl -s -m 120 http://localhost:11434/api/chat -d '{"model":"qwen2.5:14b-instruct","messages":[{"role":"user","content":"ready"}],"stream":false}' >/dev/null 2>&1; }
