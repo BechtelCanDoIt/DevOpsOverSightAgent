@@ -172,7 +172,7 @@ MCP layer — where I'd be most deliberate:
 
 The agent. A bounded tool-use loop: discover tools lazily, query, correlate, hypothesize, propose/apply remediation. The provider-configurable LLM client is a genuinely good call for a POC — it lets you demo on Anthropic and fall back to local Ollama when creds/network are constrained. I'd keep the loop's output structured: a diagnosis object (hypothesis, evidence links, confidence, proposed action) rather than free text, so remediation and the demo UI can consume it.
 
-Trigger + governance. Two entry points (Datadog webhook for realism, /investigate for demos). Agent Manager wraps the agent for policy/observability — importantly, observing the agent itself, which closes the "who watches the watcher" loop nicely for a Fidelity governance story.
+Trigger + governance. Two entry points (Datadog webhook for realism, /investigate for demos). Agent Manager wraps the agent for policy/observability — importantly, observing the agent itself, which closes the "who watches the watcher" loop nicely for a good governance story.
 
 Where I'd diverge / emphasize differently
 

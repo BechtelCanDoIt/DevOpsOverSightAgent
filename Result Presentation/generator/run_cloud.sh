@@ -2,8 +2,7 @@
 # Anthropic/Haiku A/B: 3 datasets x 6 per stack, sequential. LangChain is
 # expected UP on anthropic; Ballerina is brought up after (reads anthropic .env).
 set -u
-SP="/private/tmp/claude-501/-Users-scottbechtel-dev-clients-f-fidelity-demo-DevOpsAgent/d10bbda5-749f-47a9-a888-a77e86575709/scratchpad"
-ROOT="/Users/scottbechtel/dev/clients/f/fidelity/demo/DevOpsAgent"
+source .env
 CSV="$SP/ab_cloud.csv"; BODIES="$SP/bodies"; MEAS="$SP/measure_cloud.sh"
 
 echo "########## LANGCHAIN (Haiku) datasets 1-3 ##########"

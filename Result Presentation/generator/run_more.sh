@@ -2,6 +2,7 @@
 # Run datasets 2 & 3 for both stacks, sequentially, one stack fully before the
 # next. Ballerina is expected UP at start; LangChain is brought up after.
 set -u
+source .env
 SP="$SP"
 ROOT="$ROOT"
 CSV="$SP/ab_multi.csv"; BODIES="$SP/bodies"; MEAS="$SP/measure.sh"

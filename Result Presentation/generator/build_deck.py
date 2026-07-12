@@ -135,7 +135,7 @@ def slide_silo(prs):
     tb, tf = textbox(s, x, BT + 3.75, w, 0.5, anchor=MSO_ANCHOR.TOP)
     para(tf, "The engineer is the integration.", first=True, size=11.5, color=D.INK, bold=True, align=PP_ALIGN.CENTER)
     notes(s, """
-Set the scene. Most mature shops — and Fidelity is exactly this profile — have invested in best-of-breed observability: Splunk for logs, Datadog for metrics and APM. Individually they're great. The gap is between them. There's no shared query layer, so the correlation work is done by a human, live, during the incident. The person is the integration point. That's fine on a quiet Tuesday and terrible during a P1 at 2am. And in financial services you can't just bolt on auto-remediation to fix it — anything that touches production has to be governed and approved.
+Set the scene. Most mature shops have invested in best-of-breed observability: Splunk for logs, Datadog for metrics and APM. Individually they're great. The gap is between them. There's no shared query layer, so the correlation work is done by a human, live, during the incident. The person is the integration point. That's fine on a quiet Tuesday and terrible during a P1 at 2am. And in financial services you can't just bolt on auto-remediation to fix it — anything that touches production has to be governed and approved.
 """)
     return s
 
@@ -1430,7 +1430,7 @@ def main():
     for s, p in foot:
         footer(s, p, total)
 
-    out = "/Users/scottbechtel/dev/clients/f/fidelity/demo/DevOpsAgent/presentation/DevOps-OverSight-Agent-POC-Review.pptx"
+    out = "$OUT"
     prs.save(out)
     print(f"saved {out}  ({total} slides)")
     issues = D.qa_report(prs)

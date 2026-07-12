@@ -453,7 +453,7 @@ def main():
     for s, p in foot:
         footer(s, p, total, tag="DevOps OverSight Agent  ·  Executive Overview")
 
-    out = "/Users/scottbechtel/dev/clients/f/fidelity/demo/DevOpsAgent/presentation/DevOps-OverSight-Agent-Executive-Overview.pptx"
+    out = "$EXEC_OUT"
     prs.save(out)
     print(f"saved {out}  ({len(prs.slides._sldIdLst)} slides)")
     issues = D.qa_report(prs)
