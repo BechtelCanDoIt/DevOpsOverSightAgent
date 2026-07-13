@@ -375,6 +375,19 @@ services:
       # Single MCP entry point — the proxy federates the Splunk/Datadog backends
       # and its own topology namespace. The agent needs only this one URL.
       BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-proxy:8290}
+      # WSO2 AMP observability (optional): set AMP_TRACING_PROVIDER=amp in .env to
+      # route THIS AGENT's own OTel trace (LLM spans w/ token counts, tool spans
+      # w/ inputs/outputs) to AMP's Traces view instead of jaeger->otel-collector.
+      # Default "jaeger" = unchanged behavior. NOTE: these are real Ballerina
+      # config-override env vars (BAL_CONFIG_VAR_<ORG>_<MODULE>_<KEY>) — do not
+      # default the provider var to blank; an env var present-but-empty still
+      # overrides Config.toml (verified), so an empty tracingProvider would break
+      # tracing outright rather than falling back to the Config.toml default.
+      # host.docker.internal reaches the AMP quick-start container on the Docker
+      # host, same pattern as OLLAMA_BASE_URL above.
+      BAL_CONFIG_VAR_BALLERINA_OBSERVE_TRACINGPROVIDER: ${AMP_TRACING_PROVIDER:-jaeger}
+      BAL_CONFIG_VAR_BALLERINAX_AMP_OTELENDPOINT: ${AMP_OTEL_ENDPOINT:-http://host.docker.internal:22893/otel}
+      BAL_CONFIG_VAR_BALLERINAX_AMP_APIKEY: ${AMP_API_KEY:-}
     ports:
       - "8092:8000"  # listener on 8000. host 8082/8080 are taken by Colima's AMP-VM port-forward, so use 8092
     networks: [devops-poc]

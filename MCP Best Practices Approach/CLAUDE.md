@@ -28,6 +28,7 @@ This is a **DevOps Observability POC**: an AI agent (under WSO2 Agent Manager) c
 - **Kubernetes:** kind cluster
 - **Splunk:** Cloud trial (not Enterprise container); telemetry ships via the OTel Collector's `splunk_hec` exporter
 - **Telemetry:** single OTel Collector fanning out to Splunk (HEC) + Datadog
+- **Agent tracing (optional):** `ballerinax/amp` can ship the agent's own OTel trace straight to the AMP Console's Traces view instead of the collector — toggle via `AMP_TRACING_PROVIDER=amp` in `compose/.env`, no code change. See [`README.md`](README.md#agent-tracing--the-amp-console-optional).
 - **Mesh:** hybrid 7-service retail mesh + `load-gen` (see [`README.md`](README.md))
 - **Mock MCPs:** `splunk-mock-mcp` (port 8400) and `datadog-mock-mcp` (port 8401) stand in for live vendor MCPs until creds arrive; swapped via env vars with no code changes
 - **Agent maxTurns:** 30 (bumped from 20 to absorb discover_tools overhead from lazy loading; do NOT reduce below 25 — Ollama non-determinism plus discovery turns mean some runs need up to 25 turns)

@@ -348,6 +348,19 @@ modules = [
 
 [[package]]
 org = "ballerinax"
+name = "amp"
+version = "1.1.0"
+dependencies = [
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "jballerina.java"},
+	{org = "ballerina", name = "observe"}
+]
+modules = [
+	{org = "ballerinax", packageName = "amp", moduleName = "amp"}
+]
+
+[[package]]
+org = "ballerinax"
 name = "jaeger"
 version = "1.1.0"
 dependencies = [
@@ -388,6 +401,7 @@ dependencies = [
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"},
 	{org = "ballerinai", name = "observe"},
+	{org = "ballerinax", name = "amp"},
 	{org = "ballerinax", name = "jaeger"},
 	{org = "ballerinax", name = "prometheus"}
 ]

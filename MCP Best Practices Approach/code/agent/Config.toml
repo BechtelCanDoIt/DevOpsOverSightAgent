@@ -12,6 +12,15 @@ format = "json"
 [ballerina.observe]
 enabled = true
 provider = "jaeger"
+# Default: ship traces to the local OTel Collector (see [ballerinax.jaeger]
+# below), which fans out to Datadog/Splunk like the rest of the mesh.
+#
+# To instead see this agent's OWN reasoning trace (LLM spans w/ token counts,
+# tool spans w/ inputs/outputs) directly in the WSO2 AMP Console's Traces view,
+# switch tracingProvider to "amp" — WITHOUT editing this file — via:
+#   export BAL_CONFIG_VAR_BALLERINA_OBSERVE_TRACINGPROVIDER=amp
+# (any Config.toml value can be overridden this way: BAL_CONFIG_VAR_<ORG>_<MODULE>_<KEY>).
+# See https://wso2.github.io/agent-manager/docs/v0.18.x/tutorials/observe-first-agent/
 tracingEnabled = true
 tracingProvider = "jaeger"
 metricsEnabled = true
@@ -27,3 +36,18 @@ samplerParam = 1.0   # MUST be a decimal literal (1.0, not 1) or startup crashes
 [ballerinax.prometheus]
 host = "0.0.0.0"
 port = 9797
+
+# ballerinax/amp is an OTLP HTTP exporter targeting WSO2 AMP's own observability
+# gateway. Only active when [ballerina.observe].tracingProvider = "amp" (see
+# above) — otherwise these values sit unused. otelEndpoint below is the default
+# for a bare `bal run` next to a local AMP quick-start container; from inside
+# Docker Compose use "http://host.docker.internal:22893/otel" instead (see
+# compose/docker-compose.yml). apiKey/orgUid/projectUid/componentUid/environmentUid
+# are optional — AMP omits any left as "" (its own documented default).
+[ballerinax.amp]
+otelEndpoint = "http://localhost:22893/otel"
+apiKey = ""
+orgUid = ""
+projectUid = ""
+componentUid = ""
+environmentUid = ""

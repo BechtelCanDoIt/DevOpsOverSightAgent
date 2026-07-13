@@ -411,11 +411,11 @@ The **single MCP entry point for the agent.** It owns the service catalog, depen
 
 The incident-response **Ballerina agent** (`code/agent/`) runs under WSO2 Agent Manager on Kubernetes/kind. See [`todo/phase-4-agent.md`](todo/phase-4-agent.md).
 
-- **Framework / LLM:** Ballerina, native tool-use loop — no SDK required. LLM backend is configurable via `LLM_PROVIDER`: `ollama` (local, creds-free, default), `anthropic` (Anthropic Messages API), `openai` (OpenAI or any compatible endpoint), `amp` (WSO2 AMP AI gateway, OpenAI-compatible; AMP injects the endpoint URL). All logic is in `code/agent/llm_client.bal`; `anthropic_client.bal` handles the Anthropic-specific response format. Packaged as a Docker image built from `code/agent/Dockerfile`. OTel instrumentation is native (same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services).
+- **Framework / LLM:** Ballerina, native tool-use loop — no SDK required. LLM backend is configurable via `LLM_PROVIDER`: `ollama` (local, creds-free, default), `anthropic` (Anthropic Messages API), `openai` (OpenAI or any compatible endpoint), `amp` (WSO2 AMP AI gateway, OpenAI-compatible; AMP injects the endpoint URL). All logic is in `code/agent/llm_client.bal`; `anthropic_client.bal` handles the Anthropic-specific response format. Packaged as a Docker image built from `code/agent/Dockerfile`. OTel instrumentation is native — `ballerinax/jaeger` + `ballerinax/prometheus` (default, same pattern as the mesh services), plus an optional `ballerinax/amp` exporter that ships this agent's own trace straight to the AMP Console instead (see [Agent tracing → the AMP Console](#agent-tracing--the-amp-console-optional)).
 - **MCP wiring:** connects to the MCP Proxy (`:8290`) via `BALLERINA_TOPOLOGY_MCP_URL` using `code/agent/mcp_client.bal`. The proxy handles routing to the Splunk and Datadog MCP backends — swapping to live vendor MCPs requires only changing `SPLUNK_MCP_URL` / `DATADOG_MCP_URL` on the proxy, with no agent changes.
 - **Behavior / guardrail:** the system prompt drives a 10-step triage loop — monitors → metrics → trace → correlate → logs → blast radius → deploys → history → **propose a runbook before running it** → summarize. Topology tools are always in context; Splunk/Datadog tools are loaded on demand via `discover_tools` (lazy loading — scales to the real vendor MCPs which expose 50+ tools each). The **propose-before-act** guardrail is hard: the agent must call `list_runbooks` and present its choice for human approval *before* it may call `run_runbook`. Max turns (`30`) and model are configurable via env vars.
 - **Triggers:** `POST /investigate` (structured alert body) or `POST /webhook/alert` (Datadog webhook format) — both exposed on `:8080`. In the live demo, a **Datadog-monitor webhook** fires `POST /webhook/alert` automatically when the `payment-service` error rate exceeds threshold.
-- **Self-observability (the meta-win):** the agent's OTel spans flow through the same OTel Collector as the mesh — its reasoning trace, per-LLM-call latency, and tool-call durations are visible in Datadog alongside the workload it's diagnosing. The agent watches the workload; Datadog watches the agent.
+- **Self-observability (the meta-win):** by default, the agent's OTel spans flow through the same OTel Collector as the mesh — its reasoning trace, per-LLM-call latency, and tool-call durations are visible in Datadog alongside the workload it's diagnosing. The agent watches the workload; Datadog watches the agent. Set `AMP_TRACING_PROVIDER=amp` in `compose/.env` to instead (or additionally) send the agent's own trace straight to the **WSO2 AMP Console's Traces view** — see below.
 
 ### WSO2 Agent Manager — quick-start
 
@@ -435,6 +435,36 @@ docker run --rm --name amp-quick-start \
 # Uninstall (keep cluster): ./uninstall.sh inside the container
 # Uninstall + delete cluster: ./uninstall.sh --delete-cluster
 ```
+
+### Agent tracing → the AMP Console (optional)
+
+The agent does **not** need to be Platform-Hosted to show up in AMP's own
+Traces view — it just needs to ship its OTel trace to AMP's observability
+gateway instead of (or alongside) the local OTel Collector. This works for the
+Compose-run agent (the default demo path) too:
+
+1. In the AMP Console (`http://localhost:3000`), register the agent under
+   **Setup Agent** as an externally-hosted agent and generate an API key —
+   copy it immediately, it is shown once.
+2. In `compose/.env`, set:
+   ```
+   AMP_TRACING_PROVIDER=amp
+   AMP_API_KEY=<the key from step 1>
+   ```
+   (`AMP_OTEL_ENDPOINT` already defaults to `http://host.docker.internal:22893/otel`,
+   which reaches the quick-start container from inside Compose — `localhost`
+   only works for a bare, non-containerized `bal run`.)
+3. `docker compose -f compose/docker-compose.yml up -d --force-recreate devops-oversight-agent`
+4. Trigger an investigation, then open **Observability → Traces** in the AMP
+   Console: the root span shows end-to-end latency, LLM spans show token
+   counts, tool spans show inputs/outputs.
+
+This is implemented via the official [`ballerinax/amp`](https://central.ballerina.io/ballerinax/amp)
+observability extension per WSO2's
+[Observe Your First Agent](https://wso2.github.io/agent-manager/docs/v0.18.x/tutorials/observe-first-agent/)
+tutorial — see `code/agent/tracing.bal` and `code/agent/Config.toml`
+(`[ballerinax.amp]`). Leave `AMP_TRACING_PROVIDER` unset to keep the default
+`jaeger` → OTel Collector → Datadog/Splunk path; nothing else changes.
 
 Once the control plane is up, create a **Platform-Hosted** agent in `http://localhost:3000`:
 

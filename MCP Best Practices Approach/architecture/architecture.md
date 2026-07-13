@@ -237,7 +237,7 @@ in Splunk share the same `trace_id`, which is what makes cross-system correlatio
 
 ## 5. MCP & agent tier
 
-The agent is **Ballerina** (same as the workload mesh and MCP Proxy — the entire stack is Ballerina). It calls the LLM directly via HTTP using a native tool-use loop; no SDK required. The LLM backend is selected by the `LLM_PROVIDER` env var: `ollama` (default, creds-free, local Ollama at `OLLAMA_BASE_URL`), `anthropic` (Anthropic Messages API; AMP proxy via `ANTHROPIC_URL`), `openai`, or `amp` (WSO2 AMP AI gateway). OTel instrumentation uses the same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services.
+The agent is **Ballerina** (same as the workload mesh and MCP Proxy — the entire stack is Ballerina). It calls the LLM directly via HTTP using a native tool-use loop; no SDK required. The LLM backend is selected by the `LLM_PROVIDER` env var: `ollama` (default, creds-free, local Ollama at `OLLAMA_BASE_URL`), `anthropic` (Anthropic Messages API; AMP proxy via `ANTHROPIC_URL`), `openai`, or `amp` (WSO2 AMP AI gateway). OTel instrumentation uses the same `ballerinax/jaeger` + `ballerinax/prometheus` pattern as the mesh services by default, with an optional `ballerinax/amp` exporter — see §Agent self-observability below.
 
 ### MCP Proxy and backends
 
@@ -298,10 +298,12 @@ The **MCP Proxy** (the agent's single entry point) may be fronted by the **WSO2 
 
 ### Agent self-observability (the meta-win)
 
-The agent watching the workload is itself watched. After triggering an investigation, `amp-console` /
-`amp-trace-observer` shows the full agent trace with each **tool call as a span**, plus per-LLM-call
-latency and token usage. Caveat: `amp-instrumentation` may capture request bodies — bearer tokens must
-be scrubbed via Agent Manager's redaction config before they hit the trace observer.
+The agent watching the workload is itself watched — two ways, both driven purely by config:
+
+- **Default:** the agent's OTel spans flow through the same OTel Collector as the mesh (`ballerinax/jaeger`, `[ballerina.observe].tracingProvider = "jaeger"` in `code/agent/Config.toml`) — its reasoning trace, per-LLM-call latency, and tool-call durations land in Datadog alongside the workload it's diagnosing.
+- **Direct to AMP:** the official [`ballerinax/amp`](https://central.ballerina.io/ballerinax/amp) observability extension (imported in `code/agent/tracing.bal`) can instead ship the agent's trace straight to the **AMP Console's Traces view** — root span with end-to-end latency, LLM spans with token counts, tool spans with inputs/outputs. Switch by setting `tracingProvider = "amp"` (env override: `BAL_CONFIG_VAR_BALLERINA_OBSERVE_TRACINGPROVIDER=amp`, or `AMP_TRACING_PROVIDER=amp` in `compose/.env`) — no code change. See the README's [Agent tracing → the AMP Console](../README.md#agent-tracing--the-amp-console-optional) and WSO2's [Observe Your First Agent](https://wso2.github.io/agent-manager/docs/v0.18.x/tutorials/observe-first-agent/) tutorial.
+
+Caveat either way: exported spans may capture request bodies — bearer tokens must be scrubbed (Agent Manager's redaction config, or the collector pipeline) before they reach the trace store.
 
 ---
 
