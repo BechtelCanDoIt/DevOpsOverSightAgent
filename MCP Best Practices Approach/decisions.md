@@ -1,6 +1,6 @@
 # Locked Decisions
 
-All architecture and tooling choices that Phases 1–5 depend on. Treat these as immutable for the demo. Re-opening any decision requires updating this file, `CLAUDE.md`, `architecture/architecture.md`, and the relevant phase spec.
+All architecture and tooling choices that Phases 1–7 depend on. Treat these as immutable for the demo. Re-opening any decision requires updating this file, `CLAUDE.md`, `architecture/architecture.md`, and the relevant phase spec.
 
 ---
 
@@ -75,14 +75,32 @@ All architecture and tooling choices that Phases 1–5 depend on. Treat these as
 
 ---
 
-## D8 — Official MCP servers (no custom REST wrappers)
+## D8 — Official vendor MCP servers where they exist; custom wrappers where they don't
 
-**Decision:** Use the two official MCP servers directly; build only the custom Ballerina MCP.
+**Decision:** Use the official *vendor* MCP servers (Splunk, Datadog) directly. For products with no native MCP at the Customer's version, build a custom Ballerina MCP wrapper over the product's own REST/management API (Phase 6). Everything is reached through the one custom MCP Proxy.
 
 | MCP | Provider | Endpoint | Auth |
 |-----|----------|----------|------|
 | Splunk MCP | Splunk (Splunkbase app 7931) | hosted on Splunk Cloud instance | MCP bearer token |
 | Datadog MCP | Datadog (Bits AI) | `mcp.datadoghq.com` (remote-hosted) | OAuth or API+App key |
-| MCP Proxy | custom (Phase 3) | `http://host.k3d.internal:8290` (from k3d pod) / `http://mcp-proxy:8290` (from compose) | none (demo; add token in Phase 5) |
+| apim-mcp / mi-mcp / is-mcp | custom Ballerina (Phase 6) | `:8402` / `:8403` / `:8404` | `MODE=mock` default; live via product creds |
+| k8s-mcp | off-the-shelf `containers/kubernetes-mcp-server` (Phase 6, `--profile infra-mcp`) | `:8405`, read-only | kubeconfig mount |
+| MCP Proxy | custom (Phase 3) | `http://host.k3d.internal:8290` (from k3d pod) / `http://mcp-proxy:8290` (from compose) | `PROXY_API_KEY` (optional; empty = creds-free demo) |
 
-**Rationale:** Both vendors ship and maintain their own MCP surfaces. Writing custom REST wrappers around Splunk/Datadog APIs would be redundant, fragile, and unmaintainable. The Ballerina MCP is custom because no vendor owns the mesh topology, the cross-system correlation logic, or the remediation runbooks.
+**Rationale:** Both observability vendors ship and maintain their own MCP surfaces — wrapping their REST APIs would be redundant. But the Customer's WSO2 products (APIM 4.2 / MI 4.2 / IS 6.1) predate native MCP support (APIM gains it at 4.6+), so a thin Ballerina wrapper over each product's existing REST/management API is the bridge until they upgrade — mock-first so the demo runs creds-free, `MODE=live` when a real instance is available. Docker MCP was evaluated and **deferred** (its one opaque `docker` tool doesn't fit the guardrail's name-pattern filter). The Ballerina MCP Proxy is custom because no vendor owns the mesh topology, cross-system correlation, or remediation runbooks. See D9 for how these federate.
+
+---
+
+## D9 — MCP federation is N-backend and data-driven
+
+**Decision:** The proxy declares every backend as a `BackendDef` row (`federation.bal`): label, env key, default URL, `required` flag, and `allowTools`/`denyTools` glob filters. Splunk and Datadog are the only `required: true` backends; all others default to an empty URL (disabled) and federate themselves the moment a URL is configured — with **zero proxy code changes** per backend.
+
+**Rationale:** The original design hardcoded exactly two backends. Adding WSO2 products + Kubernetes made that untenable. A data-driven registry means a new backend is a table row, not new routing code; lazy `discover_tools` keeps the agent's context small regardless of how many backends are federated. Reads federate through `discover_tools`/`routeToolCall` for every backend; a tool failing its backend's `allow`/`deny` filter is never registered, so it is neither discoverable nor callable.
+
+---
+
+## D10 — Human approval for runbooks is code-enforced, not prompt-only
+
+**Decision:** `topology__run_runbook` is gated in code. The agent's `makeDispatcher` intercepts every `run_runbook` attempt from the LLM loop (`code/agent/approval.bal`) and **never forwards it to the proxy** — the model gets back a halt sentinel with a single-use approval token. The only path to the proxy's real `run_runbook` is a separate `approve <token>` / `deny <token>` chat message, parsed before the LLM sees it.
+
+**Rationale:** A prompt-only "propose before act" rule was empirically bypassed — a local model (qwen2.5:14b) autonomously executed `disable-chaos`/`restart-service` in response to an unrelated question during testing. The code gate makes bypass structurally impossible: no matter what the model emits or how it retries, it cannot reach execution. This mirrors the LangChain sibling's `HumanInTheLoopMiddleware` interrupt (Ballerina has no graph/checkpointer runtime, so it is hand-built). Scope: this protects the agent's own LLM-driven path; direct callers of the proxy (e.g. MCP Inspector) are a separate threat model covered by `PROXY_API_KEY`.

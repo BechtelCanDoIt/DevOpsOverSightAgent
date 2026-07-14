@@ -143,18 +143,19 @@ curl -s -X POST http://localhost:8092/investigate \
 The response will include:
 - Root cause summary
 - Affected services (payment + order cascade)
-- Proposed runbook steps before any action is taken
+- Proposed runbook steps before any action is taken. When the agent actually attempts execution, the code-level approval gate returns an `EXECUTION BLOCKED … Approval token: RB-N` notice — nothing runs until a human approves (see §7, option C).
 
 ---
 
 ## 7. Reset chaos
 
+**Option A — manual side-door (fastest; bypasses the agent's approval gate).** Direct chaos reset, exactly what the `disable-chaos` runbook does:
 ```bash
 curl -s -X POST http://localhost:9196/chaos/reset \
   -H "X-Chaos-Token: dev-chaos-token"
 ```
 
-Or...
+**Option B — call the proxy runbook directly (operator side-door; also bypasses the agent gate).** This reaches the proxy's real `run_runbook` without going through the agent, so the human-approval gate (which lives in the agent) does not apply — use it only as an operator escape hatch:
 ```bash
 curl -s -X POST http://localhost:8290/mcp \
   -H "Content-Type: application/json" \
@@ -172,13 +173,19 @@ curl -s -X POST http://localhost:8290/mcp \
   }' | jq .
 ```
 
-Or...
-Just ask the model to do it
-````bash
+**Option C — through the agent, exercising the human-approval gate (the governance path).** Asking the model to run it does NOT execute — the agent intercepts `run_runbook` and returns an approval token; a second `approve <token>` message actually runs it:
+```bash
+# 1. Ask — returns "EXECUTION BLOCKED ... Approval token: RB-N", nothing has run yet:
 curl -s -X POST http://localhost:8092/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "Run the disable-chaos runbook for payment-service", "sessionId": "demo-recovery"}' | jq .
-````
+  -d '{"message": "Run the disable-chaos runbook for payment-service", "sessionId": "demo-recovery"}' | jq -r .message
+
+# 2. Approve the token it handed back (use the real RB-N from step 1) — this executes it:
+curl -s -X POST http://localhost:8092/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "approve RB-1", "sessionId": "demo-recovery"}' | jq -r .message
+# ("deny RB-1" cancels instead; tokens are single-use.)
+```
 
 Confirm recovery:
 
@@ -248,10 +255,14 @@ docker compose -f compose/docker-compose.yml down -v
 
 | Service | Host port | Purpose |
 |---------|-----------|---------|
-| Agent | `8092` | `/health`, `/chat`, `/investigate`, `/webhook` |
-| MCP Proxy | `8290` | MCP Streamable HTTP endpoint |
+| Agent | `8092` | `/health`, `/chat`, `/investigate`, `/webhook`, `/health-report`, `/top5` |
+| MCP Proxy | `8290` | MCP Streamable HTTP endpoint (federates the backends below) |
 | Splunk mock MCP | `8400` | Mock Splunk tool responses |
 | Datadog mock MCP | `8401` | Mock Datadog tool responses |
+| APIM mock MCP | `8402` | WSO2 APIM wrapper (`MODE=mock` default) |
+| MI mock MCP | `8403` | WSO2 MI wrapper (`MODE=mock` default) |
+| IS mock MCP | `8404` | WSO2 IS wrapper (`MODE=mock` default) |
+| Kubernetes MCP | `8405` | Off-the-shelf, read-only (`--profile infra-mcp` only) |
 | Payment chaos | `9196` | `/chaos/error`, `/chaos/latency`, `/chaos/reset` |
 | OTel Collector | `4317` / `4318` | OTLP gRPC / HTTP |
 | Postgres | `5432` | Direct DB access |

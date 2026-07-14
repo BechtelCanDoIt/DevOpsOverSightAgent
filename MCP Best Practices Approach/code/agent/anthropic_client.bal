@@ -97,6 +97,7 @@ function runAgentLoop(
 
         if stopReason == "tool_use" {
             json[] toolResults = [];
+            string[] haltMessages = [];
             foreach json block in content {
                 string blockType = (check block.'type).toString();
                 if blockType == "tool_use" {
@@ -105,10 +106,21 @@ function runAgentLoop(
                     json toolInput = check block.input;
                     log:printInfo("tool call", tool = toolName);
                     string result = toolDispatcher(toolName, toolInput);
+                    if result.startsWith(RUNBOOK_HALT_MARKER) {
+                        haltMessages.push(result.substring(RUNBOOK_HALT_MARKER.length()));
+                    }
                     toolResults.push({'type: "tool_result", tool_use_id: toolId, content: result});
                 }
             }
             messages.push({role: "user", content: toolResults});
+            // Human-approval gate (approval.bal): a run_runbook attempt was
+            // intercepted this turn. Stop here — do not spend another LLM
+            // turn on a conversation that cannot progress until a human
+            // approves or denies via a separate chat message.
+            if haltMessages.length() > 0 {
+                finalText = "\n\n".join(...haltMessages);
+                break;
+            }
         } else {
             break;
         }

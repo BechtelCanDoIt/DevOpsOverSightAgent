@@ -9,7 +9,7 @@
 # test executes. This script handles that lifecycle.
 #
 # Usage:
-#   ./tests/runUnitTests.sh                # run all twelve packages
+#   ./tests/runUnitTests.sh                # run all fifteen packages
 #   ./tests/runUnitTests.sh order payment  # run just the listed packages
 #   KEEP_UP=1 ./tests/runUnitTests.sh      # leave Postgres/Redis/NATS up after tests
 #   BAL=/path/to/bal ./tests/runUnitTests.sh
@@ -28,14 +28,14 @@ BAL="${BAL:-/Library/Ballerina/bin/bal}"
 COMPOSE_FILE="compose/docker-compose.yml"
 INFRA_SERVICES=(postgres redis nats)
 ALL_SERVICES=(order payment inventory notification customer store invoice load-gen \
-              agent mcp-proxy splunk-mock-mcp datadog-mock-mcp)
+              agent mcp-proxy splunk-mock-mcp datadog-mock-mcp apim-mcp mi-mcp is-mcp)
 
 # Map service name → package directory under the code/ layout.
 pkg_path() {
   local svc="$1"
   case "$svc" in
     agent)                            echo "code/agent" ;;
-    mcp-proxy|splunk-mock-mcp|datadog-mock-mcp) echo "code/mcp/$svc" ;;
+    mcp-proxy|splunk-mock-mcp|datadog-mock-mcp|apim-mcp|mi-mcp|is-mcp) echo "code/mcp/$svc" ;;
     *)                                echo "code/generate/$svc" ;;
   esac
 }
@@ -236,4 +236,10 @@ if [ $overall -eq 0 ]; then
 else
   echo "Some services failed — full logs under $LOG_DIR/"
 fi
+
+# ── Naming regression guard (runs regardless of test outcome above) ──────────
+echo
+echo "════════════════════════════════════════════════════════════════════════"
+"$REPO_ROOT/scripts/scrub-check.sh" || overall=1
+
 exit $overall

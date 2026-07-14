@@ -145,13 +145,24 @@ function runOllamaLoop(
 
         json|error toolCallsField = message.tool_calls;
         if toolCallsField is json[] && toolCallsField.length() > 0 {
+            string[] haltMessages = [];
             foreach json tc in toolCallsField {
                 json fn = check tc.'function;
                 string toolName = (check fn.name).toString();
                 json args = check fn.arguments;
                 log:printInfo("tool call", tool = toolName);
                 string result = toolDispatcher(toolName, args);
+                if result.startsWith(RUNBOOK_HALT_MARKER) {
+                    haltMessages.push(result.substring(RUNBOOK_HALT_MARKER.length()));
+                }
                 messages.push({role: "tool", tool_name: toolName, content: result});
+            }
+            // Human-approval gate (approval.bal) — see anthropic_client.bal's
+            // runAgentLoop for the full rationale. Stop rather than continue
+            // an investigation that cannot progress without a human.
+            if haltMessages.length() > 0 {
+                finalText = "\n\n".join(...haltMessages);
+                break;
             }
         } else {
             json|error contentField = message.content;
@@ -344,6 +355,7 @@ function runOpenAICompatLoop(
 
         json|error toolCallsField = choiceMsg.tool_calls;
         if toolCallsField is json[] && toolCallsField.length() > 0 {
+            string[] haltMessages = [];
             foreach json tc in toolCallsField {
                 string callId = (check tc.id).toString();
                 json fn = check tc.'function;
@@ -359,8 +371,18 @@ function runOpenAICompatLoop(
                 }
                 log:printInfo("tool call", tool = toolName);
                 string result = toolDispatcher(toolName, args);
+                if result.startsWith(RUNBOOK_HALT_MARKER) {
+                    haltMessages.push(result.substring(RUNBOOK_HALT_MARKER.length()));
+                }
                 // Each tool result is its own message in OpenAI history format.
                 messages.push({role: "tool", tool_call_id: callId, content: result});
+            }
+            // Human-approval gate (approval.bal) — see anthropic_client.bal's
+            // runAgentLoop for the full rationale. Stop rather than continue
+            // an investigation that cannot progress without a human.
+            if haltMessages.length() > 0 {
+                finalText = "\n\n".join(...haltMessages);
+                break;
             }
         } else {
             json|error contentField = choiceMsg.content;

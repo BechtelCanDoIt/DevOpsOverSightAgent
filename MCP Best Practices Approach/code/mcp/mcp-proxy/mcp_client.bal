@@ -1,6 +1,7 @@
 // Minimal MCP client — the proxy uses this to federate the downstream
-// Splunk / Datadog MCP servers over HTTP (Streamable HTTP transport).
-// Sends JSON-RPC 2.0 POST requests to /mcp and returns the result.
+// Splunk / Datadog / WSO2-product / K8s / Docker MCP servers over HTTP
+// (Streamable HTTP transport). Sends JSON-RPC 2.0 POST requests to /mcp and
+// returns the result.
 //
 // This is a deliberate copy of the agent's mcp_client.bal: Ballerina packages
 // do not share code without a shared module, and the duplication is small.
@@ -8,6 +9,7 @@
 // (to the backends).
 
 import ballerina/http;
+import ballerina/lang.value;
 
 type McpToolDef record {|
     string name;
@@ -20,6 +22,58 @@ type McpToolResult record {|
     boolean isError;
 |};
 
+// Every one of our own mock/wrapper servers (splunk/datadog/apim/mi/is) is
+// lenient here and always replies with plain application/json. A REAL,
+// spec-compliant Streamable HTTP server (e.g. kubernetes-mcp-server) is NOT
+// lenient: it (a) requires this exact Accept header on every POST — reject
+// with HTTP 400 "Accept must contain both 'application/json' and
+// 'text/event-stream'" otherwise — and (b) may then reply with a
+// text/event-stream (SSE-framed) body even for a single request/response
+// instead of bare JSON. Both are handled below so real external MCP servers
+// work, not just our own mocks. Discovered wiring the Kubernetes MCP backend
+// (Phase 6.4) — see the Content-Type check in extractJsonBody.
+final map<string> & readonly MCP_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream"
+};
+
+// Parse an MCP HTTP response body regardless of whether the server chose
+// plain `application/json` or SSE-framed `text/event-stream` for this
+// request/response exchange (both are valid per the Streamable HTTP spec).
+isolated function extractJsonBody(http:Response resp) returns json|error {
+    string|error ctypeResult = resp.getHeader("Content-Type");
+    string ctype = ctypeResult is string ? ctypeResult : "";
+    if !ctype.includes("text/event-stream") {
+        return resp.getJsonPayload();
+    }
+    string bodyText = check resp.getTextPayload();
+    foreach string line in splitLines(bodyText) {
+        string trimmed = line.trim();
+        if trimmed.startsWith("data:") {
+            return value:fromJsonString(trimmed.substring(5).trim());
+        }
+    }
+    return error("SSE response contained no 'data:' line");
+}
+
+isolated function splitLines(string s) returns string[] {
+    string[] result = [];
+    string remaining = s;
+    while remaining.length() > 0 {
+        int? nlIdx = remaining.indexOf("\n");
+        string line;
+        if nlIdx is int {
+            line = remaining.substring(0, nlIdx);
+            remaining = remaining.substring(nlIdx + 1);
+        } else {
+            line = remaining;
+            remaining = "";
+        }
+        result.push(line);
+    }
+    return result;
+}
+
 // Initialize an MCP session (sends the initialize handshake).
 function mcpInitialize(http:Client mcpClient) returns error? {
     json initReq = {jsonrpc: "2.0", method: "initialize", params: {
@@ -27,20 +81,20 @@ function mcpInitialize(http:Client mcpClient) returns error? {
         capabilities: {},
         clientInfo: {name: "ballerina-devops-mcp-proxy", 'version: "1.0.0"}
     }, id: 1};
-    http:Response resp = check mcpClient->post("/mcp", initReq, {"Content-Type": "application/json"});
+    http:Response resp = check mcpClient->post("/mcp", initReq, MCP_HEADERS);
     if resp.statusCode != 200 {
         return error(string `MCP initialize failed: HTTP ${resp.statusCode}`);
     }
     // Send initialized notification (no response expected).
     json notif = {jsonrpc: "2.0", method: "notifications/initialized", params: {}};
-    http:Response _ = check mcpClient->post("/mcp", notif, {"Content-Type": "application/json"});
+    http:Response _ = check mcpClient->post("/mcp", notif, MCP_HEADERS);
 }
 
 // List tools available from an MCP server.
 function mcpListTools(http:Client mcpClient) returns McpToolDef[]|error {
     json req = {jsonrpc: "2.0", method: "tools/list", params: {}, id: 2};
-    http:Response resp = check mcpClient->post("/mcp", req, {"Content-Type": "application/json"});
-    json body = check resp.getJsonPayload();
+    http:Response resp = check mcpClient->post("/mcp", req, MCP_HEADERS);
+    json body = check extractJsonBody(resp);
     json[] rawTools = <json[]>(check body.result.tools);
     McpToolDef[] tools = [];
     foreach json t in rawTools {
@@ -56,8 +110,8 @@ function mcpListTools(http:Client mcpClient) returns McpToolDef[]|error {
 // Call a tool on an MCP server.
 function mcpCallTool(http:Client mcpClient, string toolName, json arguments, int callId) returns McpToolResult|error {
     json req = {jsonrpc: "2.0", method: "tools/call", params: {name: toolName, arguments: arguments}, id: callId};
-    http:Response resp = check mcpClient->post("/mcp", req, {"Content-Type": "application/json"});
-    json body = check resp.getJsonPayload();
+    http:Response resp = check mcpClient->post("/mcp", req, MCP_HEADERS);
+    json body = check extractJsonBody(resp);
     // Check for JSON-RPC error.
     json|error rpcErrField = body.'error;
     if rpcErrField is json && rpcErrField !is () {

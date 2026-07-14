@@ -302,6 +302,27 @@ services:
       # Downstream MCP backends — swapped to real SaaS endpoints when creds arrive.
       SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-http://splunk-mock-mcp:8400}
       DATADOG_MCP_URL: ${DATADOG_MCP_URL:-http://datadog-mock-mcp:8401}
+      # Include toggles (Y|N) — hard on/off gate for whole backend groups,
+      # above the per-backend URL check. INCLUDE_WSO2_MCP=N drops apim/mi/is
+      # from federation entirely (never connected/discovered/routed);
+      # INCLUDE_K8S_MCP=Y adds k8s/docker (also needs --profile infra-mcp for
+      # the k8s-mcp container + a kubeconfig). splunk/datadog are never gated.
+      INCLUDE_WSO2_MCP: ${INCLUDE_WSO2_MCP:-Y}
+      INCLUDE_K8S_MCP: ${INCLUDE_K8S_MCP:-N}
+      # WSO2-product MCP backend URLs (used only when INCLUDE_WSO2_MCP=Y).
+      APIM_MCP_URL: ${APIM_MCP_URL:-http://apim-mcp:8402}
+      MI_MCP_URL: ${MI_MCP_URL:-http://mi-mcp:8403}
+      IS_MCP_URL: ${IS_MCP_URL:-http://is-mcp:8404}
+      K8S_MCP_URL: ${K8S_MCP_URL:-}
+      DOCKER_MCP_URL: ${DOCKER_MCP_URL:-}
+      # Optional bearer auth on the proxy's /mcp endpoint (Refactor R4.3).
+      # Empty (default) = unauthenticated, matching the creds-free demo.
+      PROXY_API_KEY: ${PROXY_API_KEY:-}
+      # restart-service/scale-service (Phase 7.1/7.2) real write paths — both
+      # default OFF; every write falls back to the pre-existing stub unless
+      # a real backend is connected AND this is explicitly enabled.
+      K8S_WRITE_ENABLED: ${K8S_WRITE_ENABLED:-false}
+      RESTART_CONTAINER_PREFIX: ${RESTART_CONTAINER_PREFIX:-devops-poc-}
     ports:
       - "8290:8290"
     networks: [devops-poc]
@@ -309,6 +330,9 @@ services:
     depends_on:
       - splunk-mock-mcp
       - datadog-mock-mcp
+      - apim-mcp
+      - mi-mcp
+      - is-mcp
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8290/health || exit 1"]
       interval: 30s
@@ -340,6 +364,156 @@ services:
       - "8401:8401"
     networks: [devops-poc]
     restart: unless-stopped
+
+  # ── WSO2-product MCP servers (Phase 6) ──────────────────────────────────────
+  # Wrap each product's OWN built-in REST/management API. MODE=mock (default)
+  # serves deterministic fixtures — creds-free, matches the splunk/datadog mock
+  # pattern. Set MODE=live + the product's *_BASE_URL/USERNAME/PASSWORD (e.g.
+  # via --profile wso2, see wso2am/wso2mi/wso2is below) to call a real instance.
+
+  apim-mcp:
+    build:
+      context: ../code/mcp/apim-mcp
+      <<: *ballerina-build
+    image: devops-poc/apim-mcp:latest
+    environment:
+      MODE: ${APIM_MCP_MODE:-mock}
+      APIM_BASE_URL: ${APIM_BASE_URL:-https://wso2am:9443}
+      APIM_USERNAME: ${APIM_USERNAME:-admin}
+      APIM_PASSWORD: ${APIM_PASSWORD:-admin}
+    ports:
+      - "8402:8402"
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  mi-mcp:
+    build:
+      context: ../code/mcp/mi-mcp
+      <<: *ballerina-build
+    image: devops-poc/mi-mcp:latest
+    environment:
+      MODE: ${MI_MCP_MODE:-mock}
+      MI_BASE_URL: ${MI_BASE_URL:-https://wso2mi:9164}
+      MI_USERNAME: ${MI_USERNAME:-admin}
+      MI_PASSWORD: ${MI_PASSWORD:-admin}
+    ports:
+      - "8403:8403"
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  is-mcp:
+    build:
+      context: ../code/mcp/is-mcp
+      <<: *ballerina-build
+    image: devops-poc/is-mcp:latest
+    environment:
+      MODE: ${IS_MCP_MODE:-mock}
+      IS_BASE_URL: ${IS_BASE_URL:-https://wso2is:9443}
+      IS_USERNAME: ${IS_USERNAME:-admin}
+      IS_PASSWORD: ${IS_PASSWORD:-admin}
+    ports:
+      - "8404:8404"
+    networks: [devops-poc]
+    restart: unless-stopped
+
+  # ── Off-the-shelf infra MCP servers (Phase 6.4/6.5, --profile infra-mcp) ────
+  # OFF by default — K8S_MCP_URL/DOCKER_MCP_URL are empty unless this profile
+  # is active, so the proxy simply skips them (see federation.bal
+  # ensureFederation). `make infra-up` runs scripts/prepare-kubeconfig.sh then
+  # brings this profile up.
+
+  k8s-mcp:
+    image: ghcr.io/containers/kubernetes-mcp-server:latest
+    profiles: [infra-mcp]
+    # --read-only: server exposes ONLY readOnlyHint=true tools in the first
+    #   place (defense in depth alongside the proxy's own k8s denylist).
+    # --stateless: this stack's MCP client is a one-shot POST-per-call client
+    #   (see mcp_client.bal) with no Mcp-Session-Id tracking — matches how
+    #   every one of our own (stateless) mock servers already behaves. Without
+    #   this flag the server runs in stateful mode and rejects a bare
+    #   tools/list with "invalid during session initialization".
+    command: ["--port", "8405", "--read-only", "--stateless", "--kubeconfig", "/kubeconfig/config"]
+    volumes:
+      - ./kubeconfig/config:/kubeconfig/config:ro
+    ports:
+      - "8405:8405"
+    networks: [devops-poc]
+    restart: unless-stopped
+    # No healthcheck: distroless image, no shell/wget available. The proxy's
+    # own per-backend retry back-off (federation.bal) treats it as optional
+    # and self-heals once it's reachable.
+
+  # ── Real WSO2 products (Phase 6.6, --profile wso2, optional) ────────────────
+  # Live-mode target for the WSO2-product MCP servers. Mock mode (the default
+  # apim-mcp/mi-mcp/is-mcp above) remains the creds-free demo/CI path; this
+  # profile is the "real products" path the operator opts into.
+  #
+  # Images are built LOCALLY from extracted product distributions via
+  # `make wso2-build-images` (see scripts/build-wso2-images.sh + compose/wso2/
+  # Dockerfile). Because the Dockerfile layers the pure-Java product onto a
+  # MULTI-ARCH Temurin 11 base, the images run NATIVELY on arm64 or amd64 — no
+  # QEMU emulation, no dependence on WSO2's amd64-only registry images. Verified
+  # on this Apple Silicon host: all three build and boot native aarch64
+  # (MI ~3s, IS ~25s, APIM ~51s) with their health/management APIs responding.
+  #
+  # To bring the real products up in live mode, use `make wso2-up` (sets
+  # {APIM,MI,IS}_MCP_MODE=live + INCLUDE_WSO2_MCP=Y and starts this profile),
+  # or set those vars in compose/.env and run with `--profile wso2`.
+
+  wso2mi:
+    # MI 4.3.0 (4.2.0's extracted dir had a broken OSGi state — management API
+    # would not start; 4.3.0 boots clean). Built by `make wso2-build-images`.
+    image: devops-poc/wso2mi:4.3.0
+    profiles: [wso2]
+    mem_limit: 1g
+    ports:
+      # Management API only (what mi-mcp calls). MI's internal passthrough port
+      # (8290) collides with mcp-proxy's host port and must never be published.
+      - "9164:9164"
+    networks: [devops-poc]
+    restart: unless-stopped
+    healthcheck:
+      # /management/ returns 401 unauthenticated — a response (any code) means
+      # the API is up, so run curl WITHOUT -f (which would treat 401 as failure).
+      test: ["CMD-SHELL", "curl -sk -o /dev/null https://localhost:9164/management/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  wso2am:
+    # APIM 4.2.0, built native-arm64 by `make wso2-build-images`.
+    image: devops-poc/wso2am:4.2.0
+    profiles: [wso2]
+    mem_limit: 2g
+    ports:
+      - "9443:9443"
+      - "8243:8243"
+    networks: [devops-poc]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -skf https://localhost:9443/services/Version || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
+  wso2is:
+    # IS 6.1.0, built native-arm64 by `make wso2-build-images`.
+    image: devops-poc/wso2is:6.1.0
+    profiles: [wso2]
+    mem_limit: 2g
+    ports:
+      # wso2am above already publishes host 9443 — IS goes to host 9446.
+      - "9446:9443"
+    networks: [devops-poc]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -skf https://localhost:9443/api/health-check/v1.0/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
 
   # ── DevOps agent (Phase 4) ────────────────────────────────────────────────
 
@@ -375,6 +549,9 @@ services:
       # Single MCP entry point — the proxy federates the Splunk/Datadog backends
       # and its own topology namespace. The agent needs only this one URL.
       BALLERINA_TOPOLOGY_MCP_URL: ${BALLERINA_TOPOLOGY_MCP_URL:-http://mcp-proxy:8290}
+      # Phase 4 §4.9 — bumped 30→40 default to absorb extra discover_tools
+      # turns from Phase 6's federated backends. Do not go below 25.
+      AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-40}
       # WSO2 AMP observability (optional): set AMP_TRACING_PROVIDER=amp in .env to
       # route THIS AGENT's own OTel trace (LLM spans w/ token counts, tool spans
       # w/ inputs/outputs) to AMP's Traces view instead of jaeger->otel-collector.

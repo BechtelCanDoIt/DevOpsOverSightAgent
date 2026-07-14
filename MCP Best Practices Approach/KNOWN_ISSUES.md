@@ -19,7 +19,7 @@
 **Recovery:**
 1. Retry once — Ollama often completes in fewer turns on the next attempt.
 2. If it fails repeatedly, switch to the Anthropic backend: set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in `compose/.env`, then `docker compose up -d devops-oversight-agent`.
-3. The maxTurns is set to 30 in `devops_oversight_agent.bal`. Do not reduce below 25 — Ollama non-determinism plus `discover_tools` overhead can consume up to 25 turns on some runs.
+3. maxTurns defaults to **40** (`configurable int agentMaxTurns` in `devops_oversight_agent.bal`; override with `AGENT_MAX_TURNS` in `compose/.env` — no rebuild needed). It was bumped from 30 for the Phase 6/7 backend expansion (more federated backends → more `discover_tools` turns). Do not reduce below 25 — Ollama non-determinism plus discovery overhead can consume up to 25 turns on some runs.
 
 ### Investigation hangs / takes >5 minutes
 **Symptom:** `make investigate` returns HTTP 200 but takes a very long time.
@@ -30,11 +30,18 @@
 1. **Speed up:** switch to Anthropic Claude (requires real API key): set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=sk-ant-api03-…` in compose/.env
 2. **Wait it out:** tail the agent logs (`docker compose logs -f devops-oversight-agent`) to watch tool calls progress. The investigation is still running.
 
+### Agent says "EXECUTION BLOCKED — human approval required … Approval token: RB-N"
+**Symptom:** You ask the agent to run a runbook (or it proposes one during an investigation) and get back an `EXECUTION BLOCKED … Approval token: RB-N` message instead of the runbook running.
+
+**This is expected — it is the human-approval gate working as designed** (Phase 4 §4.9, `code/agent/approval.bal`). The agent's dispatcher intercepts every `topology__run_runbook` call and never forwards it; the model cannot execute a runbook on its own.
+
+**To proceed:** send a separate chat message `{"message":"approve RB-N"}` to `POST /chat` to execute, or `{"message":"deny RB-N"}` to cancel. Tokens are single-use — a repeated `approve` after success correctly reports "No pending runbook found."
+
 ### Agent returns "Tool error: connection refused" for MCPs
 **Symptom:** Agent investigation completes but tool calls return connection errors.
 
 **Recovery:**
-1. Check all three MCP servers are healthy: `curl -s http://localhost:8290/health` (topology), `curl -s http://localhost:8400/health` (splunk-mock), `curl -s http://localhost:8401/health` (datadog-mock)
+1. Check the core MCP servers are healthy: `curl -s http://localhost:8290/health` (proxy — its response also lists per-backend status), `curl -s http://localhost:8400/health` (splunk-mock), `curl -s http://localhost:8401/health` (datadog-mock). The WSO2-product mocks (8402/8403/8404) are also up by default.
 2. If any is unhealthy, restart the stack: `docker compose down && docker compose up -d`
 
 ### Chaos endpoints return connection refused or HTTP 408
@@ -98,12 +105,12 @@ If you see `ssh` listed (not blank), another VM's Lima is intercepting the port.
 - Agent cannot reach MCPs — ensure kind networking is wired correctly
 - Fallback: run the demo on Compose instead
 
-### Agent proposal appears but runbook execution fails
-**Symptom:** Agent proposes `disable-chaos`, operator clicks Approve, but the runbook never executes.
+### Approved runbook reports success but chaos isn't cleared
+**Symptom:** Operator sends `approve RB-N`, the agent replies `"…APPROVED and executed"`, but the target service is still degraded.
 
-**Root cause:** The agent's `run_runbook` tool call reached the MCP, but the MCP could not reach the target service chaos endpoint (likely a network routing issue in the kind cluster).
+**Root cause:** The approval handler's `run_runbook` reached the proxy, but the proxy/backend could not reach the target service's chaos endpoint (a network routing issue — common in the kind cluster; the runbook's step log will show `call failed: …`).
 
-**Recovery:** Fall back to the Compose demo (guaranteed to work). The AMP path is a bonus feature with higher operational complexity.
+**Recovery:** Fall back to the Compose demo (guaranteed to work), or reset chaos directly with `make reset-chaos` / `curl … /chaos/reset`. The AMP path is a bonus feature with higher operational complexity.
 
 ---
 

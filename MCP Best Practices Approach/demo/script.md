@@ -136,7 +136,7 @@ Pipe through `jq -r .summary` to render it. A representative local-Ollama run pr
 **Proposal:** Execute `disable-chaos` on payment-service.  ⚠️ Awaiting approval before execution.
 ```
 
-(Exact wording varies per run — local models are non-deterministic. The shape — findings → analysis → propose-then-wait — is consistent.)
+(Exact wording varies per run — local models are non-deterministic. The shape — findings → analysis → propose-then-wait — is consistent. When the agent actually attempts `run_runbook`, the code gate returns an `EXECUTION BLOCKED … Approval token: RB-N` notice — that token is what the operator approves in Beat 4.)
 
 **Talking points:**
 - "The agent correlated `trace_id` across Datadog and Splunk via the custom topology MCP — no hardcoded correlation logic in the agent itself."
@@ -149,21 +149,30 @@ Pipe through `jq -r .summary` to render it. A representative local-Ollama run pr
 
 **Narration:** "The agent proposes a runbook — it does **not** execute destructive actions autonomously. A human approves first. That gate is the governance story."
 
-**The guardrail:** the system prompt forces the agent to call `topology__list_runbooks` and *present* its choice before it is allowed to call `topology__run_runbook`. It proposes `disable-chaos` and stops.
+**The guardrail (code-enforced, not just prompted):** when the agent tries to run `disable-chaos`, the agent's dispatcher intercepts the `topology__run_runbook` call (`code/agent/approval.bal`) — it is **never** forwarded to the proxy. The agent returns a blocked notice carrying a single-use approval token:
 
-**Approve & remediate (operator runs the approved runbook):**
-```bash
-make reset-chaos
-# this is exactly what the disable-chaos runbook does: POST /chaos/reset on the target(s)
+```
+EXECUTION BLOCKED — human approval required before running "disable-chaos"
+with params {"service":"payment-service"}. This action has NOT run.
+Approval token: RB-1. Reply with "approve RB-1" to execute it, or "deny RB-1" to cancel.
 ```
 
-**Expected output:** all 7 services report `reset OK (HTTP 201)`.
+**Approve & remediate (the operator sends a separate chat message — the ONLY path that runs the runbook):**
+```bash
+curl -s -X POST http://localhost:8092/chat -H "Content-Type: application/json" \
+  -d '{"message":"approve RB-1"}' | jq -r .message
+# → "Runbook \"disable-chaos\" (token RB-1) APPROVED and executed: ... POST /chaos/reset ..."
+# "deny RB-1" cancels instead; tokens are single-use.
+```
 
-> **Bonus — AMP path:** in the WSO2 Agent Manager console the proposal appears as a pending
-> approval card; clicking **Approve** lets the agent call `run_runbook` itself, and the
-> SSE-streamed progress shows in the trace view.
+**Expected output:** the runbook runs `POST /chaos/reset` on payment-service; the audit log gains an entry only now, timestamped to the approval. (`make reset-chaos` is a manual side-door that resets chaos directly — handy as a fallback, but it bypasses the governance gate, so it is NOT the approval step.)
 
-**Talking point:** "Tool access ≠ permission to act. The propose-before-act gate is enforced regardless of how the agent is hosted."
+> **Bonus — AMP path:** the same `approve <token>` / `deny <token>` exchange surfaces through the
+> WSO2 Agent Manager console chat. The gate lives in the agent's code (`approval.bal`), so it is
+> enforced identically no matter how the agent is hosted — the console does not get a "let the LLM
+> run it" shortcut.
+
+**Talking point:** "Tool access ≠ permission to act. The gate is enforced in *code*, not by a prompt the model can ignore — we caught a local model trying to auto-remediate an unrelated question, and the interception stopped it cold. Mirrors LangChain's HumanInTheLoopMiddleware."
 
 ---
 
@@ -207,7 +216,8 @@ curl -s -X POST http://localhost:8092/chat \
 | Chaos returns `000` / connection refused | You're hitting the wrong port — chaos is on host ports **9191–9197** (payment = **9196**), not 9099 (that's the in-container port) |
 | Charges all 502 after reset | Reset may have raced the latency window; re-run `make reset-chaos` and wait ~5s |
 | Agent not responding on 8092 | `docker compose logs devops-oversight-agent`; confirm listener on :8000 mapped to :8092 |
-| Investigation hangs | The agent makes real Claude API calls (~30–60s with several tool calls); give it time, or tail the agent log to see tool calls progressing |
+| Investigation hangs | The agent makes several sequential LLM calls (local Ollama default: ~1–2 min; Anthropic/OpenAI: ~30–60s); give it time, or tail the agent log to see tool calls progressing |
+| Agent says `EXECUTION BLOCKED … Approval token: RB-N` | **Expected** — this is the human-approval gate working. Send `{"message":"approve RB-N"}` (or `deny RB-N`) to `POST /chat` to execute or cancel. Tokens are single-use |
 | Datadog/Splunk dashboards empty | Expected unless SaaS creds (`DD_API_KEY`, `DD_APP_KEY`, `SPLUNK_HEC_TOKEN`) are set — the mock-MCP demo does not need them |
 | *(Bonus)* AMP console unreachable | `http://localhost:3000` (amp-admin/amp-admin); the AMP path is optional — fall back to this compose script |
 

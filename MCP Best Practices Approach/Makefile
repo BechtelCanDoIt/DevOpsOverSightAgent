@@ -6,11 +6,12 @@ COMPOSE_FILE := compose/docker-compose.yml
 BAL_DIRS := \
   code/agent \
   code/mcp/mcp-proxy code/mcp/splunk-mock-mcp code/mcp/datadog-mock-mcp \
+  code/mcp/apim-mcp code/mcp/mi-mcp code/mcp/is-mcp \
   code/generate/store code/generate/customer code/generate/order \
   code/generate/inventory code/generate/invoice code/generate/payment \
   code/generate/notification code/generate/load-gen
 
-.PHONY: help demo-up demo-mock-up demo-down inject-chaos reset-chaos rehearse test-bal test-all mcp-inspect investigate test-proxy
+.PHONY: help demo-up demo-mock-up demo-down inject-chaos reset-chaos rehearse test-bal test-all mcp-inspect investigate test-proxy infra-up infra-down wso2-build-images wso2-up wso2-down scrub-check
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -22,7 +23,7 @@ demo-up: ## Start the full stack (real Splunk/Datadog exporters — needs .env c
 
 demo-mock-up: ## Start stack with mock MCPs (no creds needed — good for local dev)
 	@echo "==> Building Ballerina images sequentially (avoids JVM OOM with parallel builds)..."
-	@for svc in store customer order inventory invoice payment notification load-gen mcp-proxy splunk-mock-mcp datadog-mock-mcp devops-oversight-agent; do \
+	@for svc in store customer order inventory invoice payment notification load-gen mcp-proxy splunk-mock-mcp datadog-mock-mcp apim-mcp mi-mcp is-mcp devops-oversight-agent; do \
 		echo "  -- building $$svc"; \
 		docker compose -f $(COMPOSE_FILE) --profile mock build $$svc || exit 1; \
 	done
@@ -81,3 +82,32 @@ investigate: ## Trigger a test investigation against payment-service (requires: 
 		-H "Content-Type: application/json" \
 		-d '{"service":"payment-service","severity":"P1","description":"502 spike detected","id":"INC-TEST-1"}' \
 		| jq .
+
+infra-up: ## Start the off-the-shelf Kubernetes/Docker MCP servers (Phase 6.4/6.5)
+	@echo "==> Preparing a container-reachable kubeconfig from your current kubectl context..."
+	./scripts/prepare-kubeconfig.sh
+	docker compose -f $(COMPOSE_FILE) --profile infra-mcp up -d
+	docker compose -f $(COMPOSE_FILE) --profile infra-mcp ps
+
+infra-down: ## Stop the infra-mcp profile services
+	docker compose -f $(COMPOSE_FILE) --profile infra-mcp stop k8s-mcp docker-mcp 2>/dev/null || true
+
+wso2-build-images: ## Build wso2mi/wso2am/wso2is images native-arch from local extracted distros (set WSO2_SRC_DIR, default ~/dev/wso2)
+	./scripts/build-wso2-images.sh
+
+# Live-mode "one switch": bring up the real products AND run apim/mi/is MCP
+# servers against them (MODE=live) with the proxy including the WSO2 group.
+# Requires `make wso2-build-images` first. Recreates the MCP servers + proxy so
+# the live-mode env takes effect.
+wso2-up: ## Start real WSO2 products + point the MCP servers at them (live mode)
+	INCLUDE_WSO2_MCP=Y APIM_MCP_MODE=live MI_MCP_MODE=live IS_MCP_MODE=live \
+		docker compose -f $(COMPOSE_FILE) --profile wso2 up -d --force-recreate \
+		wso2mi wso2am wso2is apim-mcp mi-mcp is-mcp mcp-proxy
+	docker compose -f $(COMPOSE_FILE) --profile wso2 ps
+
+wso2-down: ## Stop the real WSO2 products and revert the MCP servers to mock mode
+	docker compose -f $(COMPOSE_FILE) --profile wso2 stop wso2mi wso2am wso2is 2>/dev/null || true
+	docker compose -f $(COMPOSE_FILE) up -d --force-recreate apim-mcp mi-mcp is-mcp mcp-proxy
+
+scrub-check: ## Naming regression guard — fail if the Customer's real name leaks into any tracked file
+	./scripts/scrub-check.sh

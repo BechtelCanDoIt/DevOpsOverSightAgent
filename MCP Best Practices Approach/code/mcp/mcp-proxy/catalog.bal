@@ -69,6 +69,34 @@ final map<string[]> & readonly ASYNC_EDGES = {
     "order-service": ["notification-service"]
 };
 
+// Phase 7.5 — deployment cache backing topology__list_deployments. product
+// matches a BackendDef label (federation.bal) for the three WSO2 products;
+// "mesh" entries have no healthTool since they're probed via ServiceInfo's
+// own healthEndpoint (see skills.bal probeServiceHealth), not a backend tool.
+type DeploymentInfo record {|
+    string name;
+    string product;
+    string 'version;
+    string environment;
+    string endpoint;
+    string healthTool;
+|};
+
+final DeploymentInfo[] & readonly DEPLOYMENTS = [
+    {name: "wso2am", product: "apim", 'version: "4.2.0", environment: "demo", endpoint: "http://apim-mcp:8402", healthTool: "apim_health"},
+    {name: "wso2mi", product: "mi", 'version: "4.2.0", environment: "demo", endpoint: "http://mi-mcp:8403", healthTool: "mi_health"},
+    {name: "wso2is", product: "is", 'version: "6.1.0", environment: "demo", endpoint: "http://is-mcp:8404", healthTool: "is_health"},
+    {name: "store-service", product: "mesh", 'version: "n/a", environment: "demo", endpoint: "http://store:9090", healthTool: ""},
+    {name: "customer-service", product: "mesh", 'version: "n/a", environment: "demo", endpoint: "http://customer:9090", healthTool: ""},
+    {name: "order-service", product: "mesh", 'version: "n/a", environment: "demo", endpoint: "http://order:9090", healthTool: ""},
+    {name: "inventory-service", product: "mesh", 'version: "n/a", environment: "demo", endpoint: "http://inventory:9090", healthTool: ""},
+    {name: "invoice-service", product: "mesh", 'version: "n/a", environment: "demo", endpoint: "http://invoice:9090", healthTool: ""},
+    {name: "payment-service", product: "mesh", 'version: "n/a", environment: "demo", endpoint: "http://payment:9090", healthTool: ""},
+    {name: "notification-service", product: "mesh", 'version: "n/a", environment: "demo", endpoint: "http://notification:9090", healthTool: ""}
+];
+
+isolated function listDeployments() returns DeploymentInfo[] => DEPLOYMENTS;
+
 isolated function catalogLookup(string name) returns ServiceInfo? => SERVICE_CATALOG[name];
 
 isolated function listAllServices() returns string[] {

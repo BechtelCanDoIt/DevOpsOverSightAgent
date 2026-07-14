@@ -1,15 +1,19 @@
 # Architecture — DevOps Observability POC
 
 This POC demonstrates an AI agent that diagnoses and remediates a production-style incident by
-correlating signals across **two real observability backends**. A Ballerina retail microservice
-mesh emits traces, logs, and metrics through a **single OpenTelemetry Collector** that fans out to
-**Splunk** (logs/traces) and **Datadog** (APM/metrics). A **Ballerina agent** calls a configurable
-LLM via HTTP using a native tool-use loop — **local Ollama** (creds-free, default), **Anthropic
-Claude**, **OpenAI**, or **WSO2 AMP** (switched via `LLM_PROVIDER` env var) — and reaches all
-observability signal sources through a single **MCP Proxy** (`:8290`). The proxy owns the service
-catalog, cross-system trace correlation, and scoped remediation runbooks locally, and routes
-Splunk and Datadog tool calls to their respective backends (mock MCPs by default; swapped for
-official SaaS MCPs when creds arrive). The headline scenario: an operator injects chaos into
+correlating signals across **two required observability backends** plus an expanding set of
+**optional federated backends**. A Ballerina retail microservice mesh emits traces, logs, and
+metrics through a **single OpenTelemetry Collector** that fans out to **Splunk** (logs/traces) and
+**Datadog** (APM/metrics). A **Ballerina agent** calls a configurable LLM via HTTP using a native
+tool-use loop — **local Ollama** (creds-free, default), **Anthropic Claude**, **OpenAI**, or **WSO2
+AMP** (switched via `LLM_PROVIDER` env var) — and reaches all observability signal sources through a
+single **MCP Proxy** (`:8290`). The proxy owns the service catalog, cross-system trace correlation,
+scoped remediation runbooks, and cross-backend "skills" (health/top-issues aggregation) locally,
+and routes each backend's tool calls to a data-driven `BackendDef` row — Splunk and Datadog are
+required and always-on (mock MCPs by default; swapped for official SaaS MCPs when creds arrive);
+three Ballerina-authored WSO2-product wrappers (APIM/MI/IS, mock-first with a live-mode flag) and an
+off-the-shelf, read-only Kubernetes MCP federate in the same way, optionally, with zero proxy code
+change per backend (Phase 6/7 — see §5). The headline scenario: an operator injects chaos into
 `payment-service`, a Datadog monitor fires, and the agent investigates end-to-end, proposes a
 runbook, and — after human approval — remediates and writes a postmortem.
 
@@ -96,10 +100,13 @@ and the mesh's own topology service as MCP tool surfaces.
 ┌──────────────────────┼─────────────────────────────────────────────────────────────────┐
 │  DOCKER COMPOSE  (bridge network: devops-poc)  —  Workload + observability tier        │
 │                       ▼                                                                 │
-│   MCP Proxy (Streamable HTTP, :8290)   src: code/mcp/mcp-proxy/                       │
-│   ├── topology/correlation/runbook tools  (local, owns service catalog)                │
-│   ├── routes Splunk calls  ──► splunk-mock-mcp (:8400)  [or real Splunk MCP via env]   │
-│   └── routes Datadog calls ──► datadog-mock-mcp (:8401) [or real Datadog MCP via env]  │
+│   MCP Proxy (Streamable HTTP, :8290)   src: code/mcp/mcp-proxy/                        │
+│   ├── topology/correlation/runbook/skills tools (local, owns service catalog)          │
+│   ├── required:  splunk-mock-mcp :8400  +  datadog-mock-mcp :8401  (or real MCPs)      │
+│   └── optional, federated (Phase 6 — zero proxy code change per backend):              │
+│        ├─ apim-mcp :8402 · mi-mcp :8403 · is-mcp :8404  (mock-first, MODE=live)        │
+│        ├─ k8s-mcp :8405  (read-only, off-the-shelf, --profile infra-mcp)               │
+│        └─ docker MCP — evaluated, deferred (opaque single-tool shape)                  │
 │                                                                                        │
 │   ┌─ Workload mesh (7 services + load-gen) ──────────────────────────────────────┐    │
 │   │  store  customer  order  inventory  invoice  payment  notification            │    │
@@ -118,7 +125,7 @@ and the mesh's own topology service as MCP tool surfaces.
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**How the tiers connect.** The agent runs in k3d (via the AMP quick-start container); the MCP Proxy, mock MCP backends, and workload run in Compose on the host. The agent pod reaches the proxy via `host.k3d.internal:8290` — a hostname k3d registers in every pod that resolves to the Docker host. MCP port `8290` is published to the host in `docker-compose.yml`. To swap in real SaaS MCPs, set `SPLUNK_MCP_URL` and `DATADOG_MCP_URL` on the proxy — no agent code changes required.
+**How the tiers connect.** The agent runs in k3d (via the AMP quick-start container); the MCP Proxy, mock MCP backends, and workload run in Compose on the host. The agent pod reaches the proxy via `host.k3d.internal:8290` — a hostname k3d registers in every pod that resolves to the Docker host. MCP port `8290` is published to the host in `docker-compose.yml`. To swap in real SaaS MCPs, set `SPLUNK_MCP_URL` and `DATADOG_MCP_URL` on the proxy — no agent code changes required. The optional backends follow the same pattern: `{APIM,MI,IS}_MCP_MODE=live` flips each WSO2-product wrapper from its mock fixtures to the real product; `K8S_MCP_URL` (set automatically by `make infra-up`) federates the Kubernetes MCP under `--profile infra-mcp` — none of this touches the agent.
 
 ---
 
@@ -253,9 +260,13 @@ Splunk MCP knows logs; Datadog MCP knows metrics and traces. **Neither knows you
 dependency graph, owners, or runbooks** — the MCP Proxy fills that gap with local tools, and
 because it is Ballerina it can also *act* (hit chaos endpoints, restart containers) to remediate.
 
+**N-backend federation (Phase 6/7):** the two-backend table above is the always-on demo path, but the proxy's `federation.bal` generalizes federation to any number of backends via a data-driven `BackendDef` row (label, env key, default URL, `required` flag, `allowTools`/`denyTools` glob patterns) — adding a backend is a table row, not new routing code. Splunk/Datadog are the only `required: true` rows. Three Ballerina-authored WSO2-product wrappers (`apim-mcp`/`mi-mcp`/`is-mcp`, mock-first with a `MODE=live` flag — same pattern as Splunk/Datadog) and two off-the-shelf infra servers (`k8s-mcp` federated read-only; a Docker MCP spike evaluated and deferred — its one opaque `docker` tool doesn't fit the guardrail's name-pattern filtering) federate in the same way, optionally, with zero cost when their URL is unset. Full backend/port table in [`README.md`](../README.md#federated-backends-phase-6).
+
+**Write guardrail:** a backend's `allowTools`/`denyTools` glob filter runs at *registration* time — a filtered tool is simply never added to the discoverable registry, so it can be neither discovered nor called by the agent, full stop. Real write actions (`restart-service`/`scale-service`'s docker/k8s paths) run through a separate direct-call function the registry-based router never reaches, gated behind `K8S_WRITE_ENABLED` (default off). This is the same "reads federate, writes only via runbooks" principle the two-backend design already established — Phase 6/7 just generalized its enforcement point from one `if` per backend to one filter function that applies uniformly.
+
 ### MCP Proxy tool catalog
 
-`tools/list` returns **only `discover_tools` plus the 11 `topology__*` tools** — Splunk/Datadog tool schemas are hidden in the server-side registry until the agent calls `discover_tools(query)`. Tool names below are exactly as the agent sees and calls them.
+`tools/list` returns **only `discover_tools` plus the 15 `topology__*` tools** — every federated backend's tool schemas are hidden in the server-side registry until the agent calls `discover_tools(query)`. Tool names below are exactly as the agent sees and calls them.
 
 | Group | Tool (agent-facing name) | Inputs | Returns |
 |-------|--------------------------|--------|---------|
@@ -267,20 +278,29 @@ because it is Ballerina it can also *act* (hit chaos endpoints, restart containe
 | **Correlation** | `topology__correlate_trace` | `trace_id` | Datadog APM URL + pre-filtered Splunk search URL + involved services — links + topology only; the agent follows up with `splunk__splunk_run_query` / `datadog__get_datadog_trace` to fetch live data |
 | | `topology__find_recent_deploys` | `service`, `lookback` | Recent deploys (stub deploy log) — "did something change?" |
 | | `topology__find_related_incidents` | `service`, `lookback` | Past incidents (stub local SQLite) — learning-from-history |
-| **Runbooks** | `topology__list_runbooks` | (none) | Array of `{ id, name, description, params_schema }` |
+| **Runbooks** | `topology__list_runbooks` | (none) | Array of `{ id, name, description, params_schema, symptoms, category, riskLevel, automatable }` |
 | | `topology__run_runbook` | `id`, `params` | **SSE-streaming** progress of runbook execution |
+| | `topology__suggest_runbooks` **(Phase 7)** | `service`, `diagnosis` | Top-3 ranked `{ id, name, score, riskLevel, automatable, rationale, paramsSchema }` — see §Runbook selection scoring below |
+| **Skills (Phase 7)** | `topology__health_report` | `product?` | `{ overall, generatedAt, sections }` — parallel fan-out across mesh + every federated WSO2-product backend |
+| | `topology__top_issues` | `count?`, `product?` | Ranked issues across mesh/Datadog/Splunk/APIM/MI/IS/K8s |
+| | `topology__list_deployments` | (none) | Deployment cache — 7 mesh services + wso2am/wso2mi/wso2is |
 | **Ops** | `topology__get_audit_log` | (none) | Recent runbook execution audit entries |
 | | `topology__get_deploy_freeze_status` | (none) | Current deploy-freeze flag state |
 
-**Initial runbooks** (live as Ballerina functions in `mcp-proxy/runbooks/*.bal`, each appending to an
+**Initial runbooks** (live as Ballerina functions in `mcp-proxy/runbooks.bal`, each appending to an
 `audit.log`):
 
 | Runbook | Action |
 |---------|--------|
-| `restart-service` | Restart a container/pod via Docker/K8s API (per-runbook lock for idempotency) |
+| `restart-service` | Restart a container/pod — real docker/k8s write path (gated behind `K8S_WRITE_ENABLED`) or the pre-existing stub |
 | `clear-cache` | Redis `FLUSHDB` on `inventory-service`'s cache |
 | `disable-chaos` | Calls `/chaos/reset` on a target service — **most-used in the demo** |
 | `freeze-deploys` | Sets a flag in the stub deploy registry |
+| `scale-service` **(Phase 7)** | Adjusts a Kubernetes Deployment's replica count — same real/stub gating as `restart-service` |
+
+### Runbook selection scoring (Phase 7)
+
+`topology__suggest_runbooks {service, diagnosis}` replaces unaided LLM judgment with a deterministic score: an **applicability filter** first drops any runbook not listed for that service (unless its `category` is `process`, which is always eligible — e.g. `freeze-deploys`). Surviving runbooks score `+3` per diagnosis word that exactly matches one of the runbook's `symptoms` words, `+2` for a substring match against the name/description, `+1` for a 4-character stem match — then `+4` if the runbook is catalog-listed for this service, `+2` if `automatable`, and `−2×(riskLevel−1)` as a risk penalty. Ties break in favor of the lower `riskLevel`. This is intentionally the same keyword-tiering shape as the tool-discovery scorer in §Tool-loading approach — one scoring idiom, two applications.
 
 The service catalog is a static in-code map in `code/mcp/mcp-proxy/catalog.bal` enumerating all
 seven mesh services with `dependencies` matching the §3 topology; production would discover from a
@@ -291,6 +311,12 @@ real CMDB.
 The agent starts each `investigate()` / `chat()` call with only the `discover_tools(query)` tool in context — **lazy tool loading (Pattern 2 from the MCP scaling guide)**. The agent calls `discover_tools` with a natural-language description of what it needs; the proxy scores all registered tool manifests (across the topology, Splunk, and Datadog namespaces) and returns the top-k matches, which are injected for that turn only. This keeps the initial context window small regardless of how many tools the real Splunk and Datadog MCPs expose.
 
 The tool registry is backed by a keyword-based scorer today; a pgvector + `nomic-embed-text` upgrade (already in the stack) is the planned improvement for production-grade routing accuracy. This work is tracked in the Phase 4 exit criteria.
+
+### Server-side aggregation — the "skills" pattern (Phase 7)
+
+`topology__health_report` and `topology__top_issues` answer a class of question — "how's everything?", "what's broken?" — that would otherwise cost the agent one `discover_tools` + one call *per backend*, several LLM turns for a single answer. Instead the proxy does the fan-out itself: one `start`/`wait` future per mesh service and per connected WSO2-product backend, all in flight concurrently, so wall-clock is bounded by the slowest single probe, not the sum. A **disconnected** backend short-circuits to an `UNAVAILABLE` section before ever opening a future — checked via `isBackendConnected` — so an optional backend that's simply not configured costs nothing. `topology__top_issues` follows the same shape but is deliberately not just health checks: mesh DOWN probes, Datadog alerting monitors + error-tracking issues, a fixed-SPL Splunk error-count query, and each WSO2 product's own anomaly shape (BLOCKED API, INACTIVE message processor, disconnected user store) all score into one ranked list.
+
+The agent exposes both **without the LLM loop at all** — `GET /health-report`/`GET /top5` on the agent, plus `Health`/`Top5` chat-command shortcuts that pattern-match the message text before it ever reaches `runConfiguredLlm`. This is deliberate: these are deterministic lookups, not reasoning tasks, so paying for an LLM turn (and its non-determinism) to answer them would be pure overhead. See `todo/phase-7-skills-runbooks.md` and `todo/phase-4-agent.md` §4.9.
 
 ### Optional API Manager MCP Gateway
 
@@ -351,6 +377,16 @@ The Phase 5 headline scenario — target runtime **5 minutes** end-to-end. The c
 is the **human-in-the-loop "propose before act" gate**: the agent must call `list_runbooks` and
 present its choice before it is allowed to call `run_runbook`.
 
+**This is a code-level gate, not just a prompt convention (Phase 4 §4.9).** `topology__run_runbook` is
+never forwarded to the proxy from the agent's LLM-facing dispatcher — every attempt is intercepted,
+stored, and answered with a blocked-pending-approval sentinel that halts the tool-use loop immediately
+(across all four LLM providers). The only code path able to execute a runbook for real is reached
+through a separate `"approve <token>"` / `"deny <token>"` chat message, parsed before the message ever
+reaches the LLM. This mirrors the LangChain sibling's `HumanInTheLoopMiddleware` interrupt (see
+`todo/phase-4-agent.md` §4.4 for the live before/after reproduction — an earlier prompt-only version of
+this gate was caught, on a real Ollama run, autonomously executing `disable-chaos` and `restart-service`
+in response to an unrelated question).
+
 ```
 Operator        payment-svc      Datadog        Agent (Ballerina)            MCP Proxy / Splunk / DD     Human
    │                 │              │                 │                            │                      │
@@ -384,8 +420,8 @@ Operator        payment-svc      Datadog        Agent (Ballerina)            MCP
 | 1 | **Inject** | Operator triggers `payment-service` chaos: 30% 502 rate + 2s latency. Mesh degrades. |
 | 2 | **Alert** | Pre-configured Datadog monitor fires within 60s; webhook hits the agent. |
 | 3 | **Investigate** | Agent calls `discover_tools` to load Datadog schemas, pulls metrics via `datadog__get_datadog_metric` → identifies `payment-service` spike → `topology__get_dependencies(...,"downstream")` for blast radius → loads trace tools via `discover_tools`, calls `datadog__get_datadog_trace` → `topology__correlate_trace` builds the Splunk search → loads Splunk tools via `discover_tools`, calls `splunk__splunk_run_query` → sees **mock-bank timeouts** → `topology__find_recent_deploys` finds nothing, rules out a deploy → suspects chaos/external dependency. |
-| 4 | **Propose / approve** | Agent calls `topology__list_runbooks`, **proposes** `disable-chaos` (does not run it); human approves in the agent console. |
-| 5 | **Remediate** | Agent calls `topology__run_runbook("disable-chaos", { service: "payment-service" })`; SSE streams progress; chaos resets; mesh recovers. |
+| 4 | **Propose / approve** | Agent calls `topology__list_runbooks`, attempts `run_runbook("disable-chaos", ...)` — the code-level gate intercepts it, stores the proposal, and returns an approval token instead of executing; the operator replies `"approve <token>"` in the agent console. |
+| 5 | **Remediate** | The approval message reaches `handleApprovalCommand`, the *only* path that calls the proxy's real `topology__run_runbook("disable-chaos", { service: "payment-service" })`; SSE streams progress; chaos resets; mesh recovers. |
 | 6 | **Postmortem** | Agent generates a markdown postmortem — what happened, what it did, links to the traces. |
 
 The agent is invoked by a **Datadog monitor → webhook** in the rehearsed live demo (most realistic),
@@ -427,7 +463,7 @@ connector's tracing flag, otherwise DB latency is invisible in the trace.
 | Mesh shape | **Hybrid (7 services)** | Kept the 4 spec services (`order, payment, inventory, notification`) and added `customer, invoice, store` for a richer blast-radius graph. |
 | Deployment split | **Workload + MCP local (Compose); telemetry to SaaS** | Correlation across real backends is the point; SaaS trials avoid heavy local backends. |
 | MCP scope | **Lookup + correlation + scoped runbooks** | No raw infra control — remediation is bounded to vetted runbooks. |
-| Remediation safety | **Propose-before-act gate** | Agent must `list_runbooks` and present its choice; a human approves before `run_runbook`. |
+| Remediation safety | **Code-enforced propose-before-act gate (Phase 4 §4.9)** | `run_runbook` is intercepted before it ever reaches the proxy; only a separate `"approve <token>"` chat message can trigger real execution — not just a prompt instruction a model could ignore. |
 | Agent framework | **Ballerina (native HTTP + tool-use loop)** | Anthropic Messages API called directly; tool dispatch implemented in `code/agent/`; no SDK dependency. |
 | MCP transport | **Streamable HTTP (`:8290`)** | stdio does not work in K8s; the agent pod needs a network endpoint. |
 | Service catalog | **Static in-code map (`catalog.bal`)** | Simple for a POC; production would read a real CMDB. |

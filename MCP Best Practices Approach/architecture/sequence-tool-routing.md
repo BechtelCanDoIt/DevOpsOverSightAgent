@@ -15,7 +15,7 @@ sequenceDiagram
     participant SplunkMCP as Splunk MCP<br/>:8400
     participant DatadogMCP as Datadog MCP<br/>:8401
 
-    Note over Proxy,DatadogMCP: ensureFederation() (once, lazy)<br/>registers topology__(11) + splunk__(4) + datadog__(8)
+    Note over Proxy,DatadogMCP: ensureFederation() (once, lazy)<br/>registers topology__(15) + splunk__(4) + datadog__(8)<br/>(+ apim__/mi__/is__/k8s__ when configured — N-backend)
 
     Proxy->>SplunkMCP: initialize + tools/list
     SplunkMCP-->>Proxy: splunk_* tools
@@ -30,10 +30,10 @@ sequenceDiagram
     Proxy->>Proxy: handleDiscover — snapshotRegistry()
     loop each entry in registry
         Proxy->>Registry: scoreToolMatch(name, description, query)
-        Note over Registry: exact word = +2<br/>4-char prefix (word len 5+) = +1
+        Note over Registry: query word matches a [label] tag = +3<br/>exact word = +2<br/>4-char prefix (word len 5+) = +1
         Registry-->>Proxy: score
     end
-    Proxy->>Proxy: selection sort desc, take top-5
+    Proxy->>Proxy: selection sort desc, take top-8
     Proxy-->>AgentLoop: { tools: [ splunk__splunk_run_query, splunk__splunk_get_indexes, … ] }
     AgentLoop->>AgentLoop: absorbDiscovered — push manifests into activeTools
     Note over AgentLoop: LLM now sees splunk__* schemas next turn
@@ -69,7 +69,10 @@ sequenceDiagram
 |-----------------|--------|--------------|--------------|
 | `splunk` | Splunk MCP `:8400` | `splunk__splunk_run_query` | `splunk_run_query` |
 | `datadog` | Datadog MCP `:8401` | `datadog__get_datadog_trace` | `get_datadog_trace` |
+| `apim` / `mi` / `is` / `k8s` | that backend (when configured) | `mi__mi_get_message_processors` | `mi_get_message_processors` |
 | `topology` | local `dispatchTool` | `topology__correlate_trace` | `correlate_trace` |
+
+Any registered `<label>__` prefix routes to its backend by the same split-on-`__` rule; `topology__` is the only locally-dispatched prefix. **One exception:** `topology__run_runbook` emitted by the LLM loop is intercepted in the agent's `makeDispatcher` (`approval.bal`) and **never routed to the proxy** — only a separate `approve <token>` chat message reaches the proxy's real `run_runbook` (see the overview diagram's approval gate).
 
 ## Where each responsibility lives
 
@@ -82,6 +85,7 @@ sequenceDiagram
 | Strip prefix + route the call | Proxy | `routeToolCall` / `callBackend` |
 | Fold discovered manifests into LLM context | Agent | `absorbDiscovered` |
 | Seed turn-1 tools + run the LLM loop | Agent | `initMcp` / `makeDispatcher` |
+| Intercept `run_runbook` (hard approval gate) | Agent | `makeDispatcher` → `interceptRunRunbook` (`approval.bal`); real run only via `handleApprovalCommand` |
 
 ## Keyword scorer details
 
@@ -89,9 +93,10 @@ sequenceDiagram
 lowercases both, then tokenizes the query:
 
 - Words ≤ 2 chars: **skip** (stop words)
+- Query word matching a tool's `[label]` tag (e.g. `[apim]`, `[runbook]`): **+3** (keeps label-specific queries from being buried as the tool count grows)
 - Exact word present in haystack: **+2**
 - Word ≥ 5 chars AND its 4-char prefix present: **+1** (handles plurals/stems, e.g. "errors" matches "error")
 
-Tools scoring 0 are excluded; the top-5 by score are returned. This is a
-deliberate stand-in for pgvector at ~23 tools (11 topology + 4 splunk + 8 datadog with mock
-backends) — no embedding infrastructure required for the POC.
+Tools scoring 0 are excluded; the top-8 by score are returned. This is a
+deliberate stand-in for pgvector at ~27 tools (15 topology + 4 splunk + 8 datadog with mock
+backends; more once apim/mi/is/k8s federate) — no embedding infrastructure required for the POC.

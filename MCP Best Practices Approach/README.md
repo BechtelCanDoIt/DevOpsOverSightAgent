@@ -62,13 +62,17 @@ See [manualdemo.md](demo/manualdemo.md)
 
 ```
   make test-bal
-  This runs bal test across all 12 packages. You'll see pass/fail per package. Expected: 129 total passing.
+  This runs bal test across all 15 packages. You'll see pass/fail per package. Expected: 235 total passing.
+  (./tests/runUnitTests.sh also runs this plus a naming-regression scrub-check.)
 
   Individual packages:
-  cd code/mcp/mcp-proxy && bal test        # 22 tests
+  cd code/mcp/mcp-proxy && bal test        # 81 tests
   cd code/mcp/splunk-mock-mcp && bal test   # 8 tests
   cd code/mcp/datadog-mock-mcp && bal test  # 11 tests
-  cd code/agent && bal test             # 8 tests
+  cd code/mcp/apim-mcp && bal test          # 11 tests
+  cd code/mcp/mi-mcp && bal test            # 9 tests
+  cd code/mcp/is-mcp && bal test            # 8 tests
+  cd code/agent && bal test             # 27 tests
 ```
 
   ---
@@ -165,8 +169,8 @@ make investigate
 | Path | Contents |
 |------|----------|
 | [`README.md`](README.md) · [`architecture.md`](architecture/architecture.md) · [`CLAUDE.md`](CLAUDE.md) | This file (component reference); deep-dive architecture; Claude Code guidance + locked decisions |
-| `todo/` | Authoritative phase specs (`phase-0` … `phase-5`) — start with [`todo/README.md`](todo/README.md) |
-| `code/` | Ballerina source — `agent/` (DevOps agent), `mcp/` (MCP Proxy + 2 mock MCPs), `generate/` (7 mesh services + `load-gen`) |
+| `todo/` | Authoritative phase specs (`phase-0` … `phase-7`) — start with [`todo/README.md`](todo/README.md) |
+| `code/` | Ballerina source — `agent/` (DevOps agent), `mcp/` (MCP Proxy + splunk/datadog mocks + apim/mi/is WSO2-product wrappers), `generate/` (7 mesh services + `load-gen`) |
 | `compose/` | Docker Compose observability stack (Phase 1) |
 | `demo/` | Demo script + chaos inject/reset scripts (Phase 5) |
 
@@ -201,9 +205,9 @@ How this demo maps to each practice:
 
 | # | Practice | What it is | In demo? | Comment |
 |---|---|---|:--:|---|
-| 1 | Minimal surface / split servers | Break large servers into ≤4 semantic units per component | **Y** | 3 servers; the proxy's 11 tools split cleanly into topology / correlation / runbook |
-| 2 | Lazy tool loading / deferred discovery | Expose a `discover_tools` gateway; don't inject all manifests upfront | **Y** | Topology pre-seeded; Splunk/Datadog loaded on demand |
-| 3 | Semantic router / tool registry | Back discovery with pgvector + embeddings for top-k matching | **Partial** | The registry + `discover_tools` search live in the proxy (Pattern 3's shape), but a keyword scorer stands in for pgvector — accurate enough for ~21 tools; vector infra is deferred until live vendor MCPs (50+ tools each) land |
+| 1 | Minimal surface / split servers | Break large servers into ≤4 semantic units per component | **Y** | Up to 7 backends (Splunk, Datadog, APIM, MI, IS, K8s, Docker-deferred); the proxy's 15 local `topology__`/skill tools split cleanly into topology / correlation / runbook / skills |
+| 2 | Lazy tool loading / deferred discovery | Expose a `discover_tools` gateway; don't inject all manifests upfront | **Y** | Topology + skills pre-seeded; every other backend's tools loaded on demand |
+| 3 | Semantic router / tool registry | Back discovery with pgvector + embeddings for top-k matching | **Partial** | The registry + `discover_tools` search live in the proxy (Pattern 3's shape), but a keyword scorer (with a `[label]`-tag boost) stands in for pgvector — accurate enough for ~30-50 tools across 7 possible backends; vector infra is deferred until live vendor MCPs (50+ tools each) land |
 | 4 | Higher-level abstractions | Replace fine-grained tool clusters with Skills / CLI bridges / subagents | **Y** | `correlate_trace` bundles DD URL + Splunk SPL + involved services in one call; runbooks wrap multi-step actions |
 | 5 | Per-session tool sets / project scoping | Multiple `mcp.*.json` configs selected per project | **N** | Does not apply — single-purpose agent with a fixed toolset, not a multi-project Claude config |
 | 6 | Namespace + router-friendly descriptions | Prefix federated tool names; write domain-tagged descriptions | **Y** | `splunk__`/`datadog__`/`topology__` name prefixes; `[splunk]`/`[correlation]`/`[runbook]` description tags |
@@ -320,7 +324,9 @@ The Collector tags everything with `service.namespace=devops-poc` and `deploymen
 
 ## MCP servers
 
-The agent has a **single MCP entry point: the MCP Proxy** (`mcp-proxy`, `:8290`). The proxy owns the service topology, correlation, and runbook tools locally, and routes Splunk/Datadog tool calls to the respective MCP backends. This keeps the agent's context small and makes switching between mocks and live SaaS endpoints a one-env-var change on the proxy, not the agent.
+The agent has a **single MCP entry point: the MCP Proxy** (`mcp-proxy`, `:8290`). The proxy owns the service topology, correlation, and runbook tools locally, and routes each namespaced tool call out to the backend that owns it. This keeps the agent's context small and makes switching between mocks and live SaaS endpoints a one-env-var change on the proxy, not the agent.
+
+The diagram below shows the two required observability backends (Splunk, Datadog) as the illustrative path. The proxy is N-backend: it also federates the Ballerina WSO2-product wrappers (`apim-mcp`/`mi-mcp`/`is-mcp`) and an optional read-only Kubernetes MCP — see [Federated backends (Phase 6)](#federated-backends-phase-6) for the full set and ports.
 
 ```
                         ┌─────────────────────────────────────────┐
@@ -389,23 +395,65 @@ The **single MCP entry point for the agent.** It owns the service catalog, depen
 | Correlation | `topology__correlate_trace` | `trace_id` | Datadog APM URL + Splunk search URL/SPL + involved services — **links + topology only**; agent fetches live data via Splunk/Datadog tools |
 | Correlation | `topology__find_recent_deploys` | `service`, `lookback` | recent deploys from a stub deploy log ("did something change?") |
 | Correlation | `topology__find_related_incidents` | `service`, `lookback` | past incidents from a local SQLite stub (learning-from-history) |
-| Runbooks | `topology__list_runbooks` | (none) | array of `{ id, name, description, params_schema }` |
+| Runbooks | `topology__list_runbooks` | (none) | array of `{ id, name, description, params_schema, symptoms, category, riskLevel, automatable }` |
 | Runbooks | `topology__run_runbook` | `id`, `params` | streaming (SSE) progress of the execution |
+| Runbooks | `topology__suggest_runbooks` **(Phase 7)** | `service`, `diagnosis` | top-3 ranked `{ id, name, score, riskLevel, automatable, rationale, paramsSchema }` — metadata-driven scoring instead of unaided LLM judgment |
 | Ops | `topology__get_audit_log` | (none) | recent runbook execution audit entries |
 | Ops | `topology__get_deploy_freeze_status` | (none) | current deploy-freeze flag state |
+| Skills **(Phase 7)** | `topology__health_report` | `product?` | `{ overall, generatedAt, sections:[{source,status,summary,details}] }` — parallel fan-out across mesh + every federated WSO2-product backend |
+| Skills **(Phase 7)** | `topology__top_issues` | `count?` (default 5, max 20), `product?` | ranked `{ source, severity, target, title, evidence, score }[]` across mesh/Datadog/Splunk/APIM/MI/IS/K8s |
+| Skills **(Phase 7)** | `topology__list_deployments` | (none) | the deployment cache — 7 mesh services + wso2am/wso2mi/wso2is |
 
 **Runbooks shipped:**
 
-| ID | Action |
-|---|---|
-| `restart-service` | restart a container / pod via the Docker/K8s API |
-| `clear-cache` | Redis `FLUSHDB` on `inventory-service`'s cache |
-| `disable-chaos` | call `POST /chaos/reset` on a target service (the demo's recovery lever) |
-| `freeze-deploys` | set a flag in a stub deploy registry |
+| ID | Action | Category | Risk |
+|---|---|---|---|
+| `restart-service` | restart a container / pod — real docker/k8s write path (gated behind `K8S_WRITE_ENABLED`) or the pre-existing stub | remediation | 2 |
+| `clear-cache` | Redis `FLUSHDB` on `inventory-service`'s cache | remediation | 1 |
+| `disable-chaos` | call `POST /chaos/reset` on a target service (the demo's recovery lever) | mitigation | 1 |
+| `freeze-deploys` | set a flag in a stub deploy registry | process | 1 |
+| `scale-service` **(Phase 7)** | adjust a Kubernetes Deployment's replica count — same real/stub gating as `restart-service` | mitigation | 2 |
+
+**Write guardrail:** reads federate through `discover_tools`/`routeToolCall` for every backend (including the WSO2/K8s/Docker ones below); a tool failing a backend's `allowTools`/`denyTools` glob filter is never registered — never discoverable, never callable by the agent directly. Real writes (`restart-service`/`scale-service`'s k8s/docker paths) run only through a direct backend-call path the agent can't reach on its own, and default OFF via `K8S_WRITE_ENABLED`.
 
 **Service catalog:** encoded as a static in-code map in `code/mcp/mcp-proxy/catalog.bal` — enumerates all seven mesh services with owner, slack channel, repo URL, runbook IDs, health endpoint, and declared dependencies. The dependency edges match the Phase 2 topology exactly so `get_dependencies` returns the real graph (including the `order → notification` async edge). Production would load from a real CMDB.
 
 **MCP Gateway (optional):** the MCP Proxy may be registered behind WSO2 API Manager's MCP Gateway. If used, auth is deferred to the gateway — but verify the gateway does **not** buffer SSE, or streaming `run_runbook` output breaks.
+
+### Federated backends (Phase 6)
+
+The proxy's `federation.bal` declares every backend as a `BackendDef` row (label, env key, default URL, required, allowlist/denylist) — adding a new one is a data row, not a code change. Splunk/Datadog are the only `required: true` backends (always-on demo path); everything below is optional and self-heals in the moment its URL is configured:
+
+| Backend | Port | Namespace | Mode | Notes |
+|---|---|---|---|---|
+| `apim-mcp` | 8402 | `apim__` | mock (default) / live | Wraps WSO2 API Manager 4.2's Publisher/Admin REST APIs; mock fixture has one API `BLOCKED` |
+| `mi-mcp` | 8403 | `mi__` | mock (default) / live | Wraps WSO2 Micro Integrator 4.2's Management API; mock fixture has one message processor `INACTIVE` |
+| `is-mcp` | 8404 | `is__` | mock (default) / live | Wraps WSO2 Identity Server 6.1's health/server/SCIM2 APIs; mock fixture has one user store `Disconnected` |
+| `k8s-mcp` | 8405 | `k8s__` | off-the-shelf, `--profile infra-mcp` | `ghcr.io/containers/kubernetes-mcp-server`, `--read-only --stateless`; denylists destructive tools at the proxy AND the source |
+| Docker MCP | — | — | evaluated, **deferred** | Docker's official `mcp-gateway` exposes one opaque `docker` tool — incompatible with the guardrail's name-pattern filtering; `DOCKER_MCP_URL` stays unset by design |
+
+Each WSO2-product server defaults to `MODE=mock` (deterministic fixtures, creds-free, matches the splunk/datadog pattern) — set `{APIM,MI,IS}_MCP_MODE=live` + the product's `*_BASE_URL/USERNAME/PASSWORD` to call a real instance. `make infra-up` prepares a container-reachable kubeconfig and starts `k8s-mcp`. An optional `--profile wso2` brings up the real WSO2 product containers for a live-mode smoke test (`wso2mi` is public on Docker Hub; `wso2am`/`wso2is` need `make wso2-build-images` with your own WSO2 account — see `todo/phase-6-mcp-expansion.md` §6.6 for the two independent caveats: WSO2-account-gated images, and an amd64-only image set that needs a working emulation layer on Apple Silicon hosts).
+
+### Skills (Phase 7)
+
+Two aggregation "skills" answer questions across every federated backend with **no LLM call** — deterministic, fast, and available even without LLM credentials configured:
+
+```bash
+curl "http://localhost:8092/health-report?product=apim"
+curl "http://localhost:8092/top5?count=3&product=mi"
+```
+
+The same two skills are also reachable as chat shortcuts (`POST /chat`), bypassing the tool-use loop entirely:
+
+```bash
+curl -X POST http://localhost:8092/chat -H "Content-Type: application/json" \
+  -d '{"message":"Top5 mi"}'
+# → markdown table, e.g. the seeded order-retry-processor INACTIVE anomaly
+
+curl -X POST http://localhost:8092/chat -H "Content-Type: application/json" \
+  -d '{"message":"Health apim"}'
+```
+Recognized commands: `Health`, `Health <product>`, `Top5`, `Top5 <N>`, `Top5 <product>`.
 
 ## Agent (client)
 
@@ -413,8 +461,8 @@ The incident-response **Ballerina agent** (`code/agent/`) runs under WSO2 Agent 
 
 - **Framework / LLM:** Ballerina, native tool-use loop — no SDK required. LLM backend is configurable via `LLM_PROVIDER`: `ollama` (local, creds-free, default), `anthropic` (Anthropic Messages API), `openai` (OpenAI or any compatible endpoint), `amp` (WSO2 AMP AI gateway, OpenAI-compatible; AMP injects the endpoint URL). All logic is in `code/agent/llm_client.bal`; `anthropic_client.bal` handles the Anthropic-specific response format. Packaged as a Docker image built from `code/agent/Dockerfile`. OTel instrumentation is native — `ballerinax/jaeger` + `ballerinax/prometheus` (default, same pattern as the mesh services), plus an optional `ballerinax/amp` exporter that ships this agent's own trace straight to the AMP Console instead (see [Agent tracing → the AMP Console](#agent-tracing--the-amp-console-optional)).
 - **MCP wiring:** connects to the MCP Proxy (`:8290`) via `BALLERINA_TOPOLOGY_MCP_URL` using `code/agent/mcp_client.bal`. The proxy handles routing to the Splunk and Datadog MCP backends — swapping to live vendor MCPs requires only changing `SPLUNK_MCP_URL` / `DATADOG_MCP_URL` on the proxy, with no agent changes.
-- **Behavior / guardrail:** the system prompt drives a 10-step triage loop — monitors → metrics → trace → correlate → logs → blast radius → deploys → history → **propose a runbook before running it** → summarize. Topology tools are always in context; Splunk/Datadog tools are loaded on demand via `discover_tools` (lazy loading — scales to the real vendor MCPs which expose 50+ tools each). The **propose-before-act** guardrail is hard: the agent must call `list_runbooks` and present its choice for human approval *before* it may call `run_runbook`. Max turns (`30`) and model are configurable via env vars.
-- **Triggers:** `POST /investigate` (structured alert body) or `POST /webhook/alert` (Datadog webhook format) — both exposed on `:8080`. In the live demo, a **Datadog-monitor webhook** fires `POST /webhook/alert` automatically when the `payment-service` error rate exceeds threshold.
+- **Behavior / guardrail:** the system prompt drives a 10-step triage loop — monitors → metrics → trace → correlate → logs → blast radius → deploys → history → **propose a runbook before running it** → summarize. Topology tools are always in context; every other backend's tools (Splunk, Datadog, and — when federated — APIM/MI/IS/Kubernetes) are loaded on demand via `discover_tools` (lazy loading — scales to the real vendor MCPs which expose 50+ tools each). The **propose-before-act** guardrail is enforced in code, not just prompted (Phase 4 §4.9): `topology__run_runbook` is intercepted before it ever reaches the proxy and answered with an approval token — the LLM cannot execute a runbook no matter how it retries. Only a separate `POST /chat {"message":"approve <token>"}` (or `"deny <token>"`) triggers real execution, mirroring the LangChain sibling's `HumanInTheLoopMiddleware` interrupt. Max turns (env `AGENT_MAX_TURNS`, default `40` as of Phase 6) and model are configurable via env vars.
+- **Triggers:** `POST /investigate` (structured alert body), `POST /webhook/alert` (Datadog webhook format), `POST /chat` (free text + the `Health`/`Top5` skill shortcuts, Phase 7/4.9), and the LLM-free `GET /health-report` / `GET /top5` endpoints — all on `:8000` (host `:8092`). In the live demo, a **Datadog-monitor webhook** fires `POST /webhook/alert` automatically when the `payment-service` error rate exceeds threshold.
 - **Self-observability (the meta-win):** by default, the agent's OTel spans flow through the same OTel Collector as the mesh — its reasoning trace, per-LLM-call latency, and tool-call durations are visible in Datadog alongside the workload it's diagnosing. The agent watches the workload; Datadog watches the agent. Set `AMP_TRACING_PROVIDER=amp` in `compose/.env` to instead (or additionally) send the agent's own trace straight to the **WSO2 AMP Console's Traces view** — see below.
 
 ### WSO2 Agent Manager — quick-start

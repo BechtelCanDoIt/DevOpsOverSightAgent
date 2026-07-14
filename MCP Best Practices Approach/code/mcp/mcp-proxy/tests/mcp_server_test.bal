@@ -120,8 +120,8 @@ function testFindIncidentsForPayment() {
 
 // Runbook tests
 @test:Config {}
-function testListRunbooksFour() {
-    test:assertEquals(listRunbooks().length(), 4);
+function testListRunbooksFive() {
+    test:assertEquals(listRunbooks().length(), 5);
 }
 
 @test:Config {}
@@ -176,6 +176,26 @@ function testGetDeployFreezeStatusToolFormat() {
     string|error result = dispatchTool("get_deploy_freeze_status", {});
     test:assertFalse(result is error, "get_deploy_freeze_status must not error");
     if result is string { test:assertTrue(result.includes("frozen"), "response must include frozen field"); }
+}
+
+@test:Config {}
+function testDispatchListDeploymentsToolFormat() {
+    string|error result = dispatchTool("list_deployments", {});
+    test:assertFalse(result is error);
+    if result is string {
+        test:assertTrue(result.includes("wso2am"), "list_deployments must include the wso2am entry");
+        test:assertTrue(result.includes("store-service"), "list_deployments must include mesh entries");
+    }
+}
+
+@test:Config {}
+function testDispatchSuggestRunbooksToolFormat() {
+    string|error result = dispatchTool("suggest_runbooks", {"service": "payment-service", "diagnosis": "502 chaos injected"});
+    test:assertFalse(result is error);
+    if result is string {
+        test:assertTrue(result.includes("suggestions"), "response must include a suggestions field");
+        test:assertTrue(result.includes("disable-chaos"), "chaos diagnosis must surface disable-chaos");
+    }
 }
 
 @test:Config {}

@@ -1,0 +1,3 @@
+# scripts/prepare-kubeconfig.sh writes here — contains real cluster
+# credentials, never commit it.
+config

@@ -8,6 +8,16 @@ isolated function envOr(string name, string fallback) returns string {
     return v == "" ? fallback : v;
 }
 
+// Same, parsed as int — falls back on unset/empty/unparseable.
+isolated function envOrInt(string name, int fallback) returns int {
+    string v = os:getEnv(name);
+    if v == "" {
+        return fallback;
+    }
+    int|error parsed = int:fromString(v);
+    return parsed is int ? parsed : fallback;
+}
+
 // Active OTel trace/span IDs (empty strings when outside a span).
 isolated function spanCtx() returns [string, string] {
     map<string> c = observe:getSpanContext();

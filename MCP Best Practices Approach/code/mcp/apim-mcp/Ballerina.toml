@@ -1,0 +1,8 @@
+[package]
+org = "devopspoc"
+name = "apim_mcp"
+version = "0.1.0"
+distribution = "2201.13.3"
+
+[build-options]
+observabilityIncluded = true

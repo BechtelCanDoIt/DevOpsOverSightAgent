@@ -1,6 +1,8 @@
 # Test Coverage Reference
 
-Unit tests for each Ballerina service package. All tests are pure/deterministic (no live DB or HTTP dependencies).
+Per-test detail for the **8 mesh packages** (the 7 retail services + `load-gen`) — 80 pure/deterministic tests (no live DB or HTTP dependencies).
+
+The repo has **15 Ballerina packages / 245 unit tests** total. The MCP-layer and agent packages are not enumerated test-by-test here — run `./tests/runUnitTests.sh` for the authoritative per-package counts. Current totals: `mcp-proxy` 81, `agent` 37, `splunk-mock-mcp` 8, `datadog-mock-mcp` 11, `apim-mcp` 11, `mi-mcp` 9, `is-mcp` 8. See `todo/phase-3-mcp.md` (proxy: federation/guardrail/skills), `todo/phase-4-agent.md` (agent: LLM loop, skill endpoints, the `run_runbook` approval gate), and `todo/phase-6-mcp-expansion.md` (the WSO2-product MCP servers) for what those cover.
 
 ---
 

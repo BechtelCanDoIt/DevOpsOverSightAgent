@@ -78,7 +78,7 @@ Stub deploy log and incident history also live in `correlation.bal` — `find_re
 - [ ] **[audit log and deploy-freeze state are in-memory only]** Both the runbook audit log and the deploy-freeze flag are process-scoped (lost on restart). For the demo this is acceptable (short-lived stack). For production, these MUST be persisted to a durable store (a DB table, a file, or a dedicated remediation-MCP). Mark as a known non-durable shortcut; add a `persist-audit` task here if durability is required before shipping.
 
 ### 3.5 Auth
-- [ ] Bearer token check on every request (token in env var, same as Splunk/Datadog) — not yet implemented
+- [x] Bearer token check on every request — implemented as **optional** in Refactor R4.3 below (`PROXY_API_KEY` env var; empty = unauthenticated, matching the original creds-free demo default)
 - [ ] If using API Manager MCP Gateway, defer auth to it
 
 ### 3.6 Verification
@@ -242,11 +242,50 @@ Today it only *builds links* to Splunk/Datadog. Promote it to a first-class capa
 - **Phase 2:** W3C trace-context propagation becomes a hard requirement (prerequisite for R3.4).
 - **Phase 4:** agent emits a *typed diagnosis contract* (hypothesis, evidence links, confidence, proposed action) rather than prose, so remediation and the demo UI consume structured output over a non-deterministic core.
 
+## Refactor R4 — N-backend federation, write guardrail, optional auth (2026-07)
+
+Driven by expanding the proxy beyond Splunk/Datadog to Kubernetes, Docker, and three WSO2-product MCP servers (Phase 6). The registry, namespacing, `discover_tools` scoring, and `connectBackend`/`callBackend` machinery were already generalized in the original design — what's hardcoded to exactly two backends is the client storage (`splunkBackend`/`datadogBackend` vars + getters), the `ensureFederation()` connect sequence, and `routeToolCall`'s `if origin == "splunk"/"datadog"` branches. This refactor generalizes those three things and adds the write-tool guardrail a larger, partly-off-the-shelf backend set requires.
+
+### R4.1 — Map-based backend registry
+Replace the hardcoded splunk/datadog pair with a data-driven backend table so adding a backend is a config entry, not a code change.
+- [x] `BackendDef` record: `label`, `envKey`, `defaultUrl` (`""` = disabled by default), `required` (splunk/datadog only), `allowTools`/`denyTools` (`*`-glob patterns, the write guardrail — see R4.2)
+- [x] `backendDefs()` returns the full table (splunk, datadog, apim, mi, is, k8s, docker); per-label `<LABEL>_MCP_ALLOW`/`<LABEL>_MCP_DENY` env vars merge into the allow/deny lists at read time
+- [x] State: `isolated map<http:Client> backendClients`, `map<string> backendUrls`, `map<boolean> backendConnected`, `map<int> backendLastAttempt` — lock-guarded getters (same isolation pattern as today's `splunkBackend`/`getSplunkBackend()`)
+- [x] `ensureFederation()` loops `backendDefs()`: skip if `envOrCfg(url) == ""` (backend disabled), skip if already connected, skip if inside a **15s retry back-off window**, else attempt `connectBackend`. No all-or-nothing readiness latch — an optional backend being down never blocks topology tools or already-connected backends, and self-heals on a later call once the operator brings it up
+- [x] Connect timeout 30s → **10s** (a down optional backend must not stall `tools/list`/`/health`)
+- [x] `GET /health` calls `ensureFederation()` and reports `{status, service, backends: {splunk: true, datadog: true, apim: false, ...}}` — polling `/health` alone is enough to gradually connect everything
+
+### R4.2 — Write guardrail (registration filter)
+The "read/write trust tier" principle from R3.1 now has a concrete home for backends we don't control: filter at registration, not at call time.
+- [x] `connectBackend(def, url)` runs each discovered tool through `isToolAllowed(def, name)` (deny-wins; empty allowlist = allow-all); denied tools are simply **never registered** — the agent cannot discover them, full stop
+- [x] Default deny for `k8s`: `pods_delete`, `pods_exec`, `pods_run`, `resources_delete`, `resources_create_or_update`, `helm_*` (belt-and-braces alongside running the server with `--read-only`)
+- [x] `routeToolCall`: known backend prefix + tool not in the registry → a clear "not available (not discovered, or write-restricted); write actions run only via `topology__run_runbook`" error, not a null-dereference or a silent pass-through
+- [x] New `code/mcp/mcp-proxy/backend_actions.bal`: `callBackendToolDirect(label, realName, args)` — the *only* code path allowed to invoke a filtered tool. Runbooks (Phase 7) use this for real `restart-service`; the agent never can. **"Reads federate; writes only via runbooks."**
+
+### R4.3 — Dynamic discovery + optional auth
+- [x] `discoverToolDef()`'s description is composed from `connectedBackendLabels()` at call time (was hardcoded to "Splunk/Datadog tools" — now names whatever is actually federated, plus example queries for k8s/apim/mi/is)
+- [x] Optional bearer auth on `POST /mcp`: when `PROXY_API_KEY` is set, requests without a matching `Authorization: Bearer <key>` get a JSON-RPC 401. Empty (default) = today's unauthenticated creds-free demo, unchanged. Agent's `mcp_client.bal` sends the header when `PROXY_API_KEY` is configured on its side too
+
+### R4.4 — Unit tests (`code/mcp/mcp-proxy/tests/federation_test.bal`)
+- [x] `testMatchesPatternExact`, `testMatchesPatternPrefixStar`, `testMatchesPatternSuffixStar`
+- [x] `testIsToolAllowedDenyWins`, `testIsToolAllowedEmptyAllowMeansAll`, `testIsToolAllowedAllowlistDefaultDeny`
+- [x] `testBackendDefsRequiredSet` — exactly splunk+datadog have `required=true`
+- [x] `testRouteToolCallWriteRestricted` — a known label + unregistered tool name returns the write-restricted error text
+- [x] `testRouteToolCallUnavailableBackendErrors` (existing) must still pass unmodified — an unconnected backend still returns an "unavailable" error, not the write-restricted one
+
+### R4.5 — Integration (`tests/runDockerConfigTests.sh`)
+- [x] Tests 1–4 (existing) pass unmodified — the regression gate for this refactor
+- [x] New Test 4b: `GET /health` includes `backends.splunk=true` and `backends.datadog=true` after a prior request has triggered federation
+
+**Exit criteria (R4):** `docker compose up` with only splunk/datadog configured behaves identically to pre-refactor (integration tests 1–4 green, no observable change). Setting any new `<LABEL>_MCP_URL` federates it under its own prefix with zero code change. A denylisted tool is provably uncallable end-to-end — a JSON-RPC call to it returns the write-restricted error, never a stack trace or a successful mutation.
+
 ## Pitfalls
 
 - **Trace ID format mismatch** with Datadog — already flagged in Phase 1, but it'll bite here when the agent says "no logs found for this trace" because Splunk has the 128-bit form and Datadog showed the 64-bit form.
 - **Runbook idempotency** — if the agent calls `restart-service` twice while the first is still running, what happens? Add a per-runbook lock.
 - **SSE through API Manager MCP Gateway** — if the gateway buffers responses, streaming runbook output won't work. Test early.
+- **(R4) Down optional backend must not stall the proxy** — the 15s retry back-off and 10s connect timeout exist specifically so a misconfigured `APIM_MCP_URL`/`K8S_MCP_URL`/etc. can't make every `/health` or `tools/list` call hang.
+- **(R4) The write guardrail is a registration filter, not a call-time check** — a denylisted tool is never in the registry at all. Don't be tempted to add a call-time bypass "just for testing"; use `callBackendToolDirect` (runbooks-only) instead.
 
 ## Deliverables
 
@@ -254,7 +293,10 @@ Today it only *builds links* to Splunk/Datadog. Promote it to a first-class capa
 - 4 working runbooks
 - An MCP Inspector session screenshot showing the tool list
 - An end-to-end test: inject chaos → query MCP for correlation → run the reset runbook → verify mesh recovers
+- (R4) `BackendDef`-driven federation supporting N backends with zero code change per new backend; a write-tool guardrail provably uncallable by the agent; optional `PROXY_API_KEY` bearer auth
 
 ## Exit criteria
 
 An operator (human) can complete a full incident triage using only MCP tool calls: find the failing service, see the correlated logs, and remediate via runbook. If a human can do it, the agent can.
+
+**(R4)** Federating a new backend (Kubernetes, Docker, or a WSO2-product MCP — see Phase 6) requires only a new `BackendDef` entry and a `<LABEL>_MCP_URL` value; no change to `routeToolCall`, `discover_tools`, or the agent. Its write-capable tools are provably absent from the registry the agent can see.

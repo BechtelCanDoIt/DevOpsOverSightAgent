@@ -1,0 +1,6 @@
+[ballerina.observe]
+enabled = false
+
+[ballerina.log]
+format = "json"
+level = "INFO"

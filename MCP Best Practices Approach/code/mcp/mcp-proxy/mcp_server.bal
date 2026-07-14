@@ -3,11 +3,40 @@ import ballerina/http;
 listener http:Listener mcpListener = new (8290);
 
 service /health on mcpListener {
-    resource function get .() returns json => {status: "UP", 'service: "mcp-proxy"};
+    resource function get .() returns json {
+        // Polling /health alone is enough to gradually connect every
+        // configured backend (each attempt is cheap/back-off-bounded — see
+        // ensureFederation in federation.bal), independent of any prior
+        // tools/list call.
+        ensureFederation();
+        map<json> backends = {};
+        foreach BackendDef def in backendDefs() {
+            backends[def.label] = isBackendConnected(def.label);
+        }
+        return {status: "UP", 'service: "mcp-proxy", backends: backends};
+    }
 }
 
 service /mcp on mcpListener {
     resource function post .(http:Request req) returns http:Response|error {
+        // Optional bearer auth (R4.3) — empty PROXY_API_KEY (default) keeps
+        // today's unauthenticated creds-free demo behavior unchanged.
+        string expectedKey = envOr("PROXY_API_KEY", "");
+        if expectedKey != "" {
+            string|error authHeader = req.getHeader("Authorization");
+            if authHeader is error || authHeader != string `Bearer ${expectedKey}` {
+                http:Response unauthorized = new;
+                unauthorized.statusCode = 401;
+                unauthorized.setHeader("Content-Type", "application/json");
+                unauthorized.setJsonPayload({
+                    jsonrpc: "2.0",
+                    'error: {code: -32001, message: "Unauthorized"},
+                    id: ()
+                });
+                return unauthorized;
+            }
+        }
+
         json body = check req.getJsonPayload();
         string method = (check body.method).toString();
         json? reqId = check body.id;
@@ -72,10 +101,11 @@ function buildToolCallResponse(json? id, string toolName, json arguments) return
     return {jsonrpc: "2.0", result: {content: [{'type: "text", text: content}], isError: false}, id: id};
 }
 
-// Route a namespaced tool call to its origin. Strips the "<origin>__" prefix:
-//   splunk__*   → Splunk MCP backend
-//   datadog__*  → Datadog MCP backend
-//   topology__* (or unprefixed) → local dispatchTool
+// Route a namespaced tool call to its origin. Strips the "<origin>__" prefix.
+// Any prefix matching a known BackendDef label (federation.bal) routes to
+// that backend; "topology__" (or any unrecognized/unprefixed name) falls
+// through to the local dispatchTool — preserving the original behavior of
+// treating unknown prefixes as local calls.
 function routeToolCall(string toolName, json arguments) returns string|error {
     string origin = "topology";
     string realName = toolName;
@@ -84,19 +114,23 @@ function routeToolCall(string toolName, json arguments) returns string|error {
         origin = toolName.substring(0, sep);
         realName = toolName.substring(sep + 2);
     }
-    if origin == "splunk" {
-        return callBackend(getSplunkBackend(), "splunk", realName, arguments);
+    if origin == "topology" || !isKnownBackendLabel(origin) {
+        return dispatchTool(realName, arguments);
     }
-    if origin == "datadog" {
-        return callBackend(getDatadogBackend(), "datadog", realName, arguments);
-    }
-    return dispatchTool(realName, arguments);
+    return callBackend(getBackend(origin), origin, realName, arguments, registryHas(toolName));
 }
 
-// Forward a de-prefixed tool call to a downstream MCP backend.
-function callBackend(http:Client? backend, string label, string realName, json args) returns string|error {
+// Forward a de-prefixed tool call to a downstream MCP backend. `registered`
+// distinguishes "backend simply isn't connected yet" (retry-friendly) from
+// "backend is up but this specific tool was never registered" — the latter
+// covers both a genuinely unknown tool name AND a write-guardrail-filtered
+// one (R4.2); the caller (the agent) cannot tell those apart, by design.
+function callBackend(http:Client? backend, string label, string realName, json args, boolean registered) returns string|error {
     if backend is () {
         return error(string `${label} MCP backend is unavailable (not connected). Retry shortly.`);
+    }
+    if !registered {
+        return error(string `${label}__${realName} is not available (not discovered, or write-restricted — write actions run only via topology__run_runbook).`);
     }
     McpToolResult result = check mcpCallTool(backend, realName, args, 99);
     return result.text;
@@ -124,12 +158,10 @@ function dispatchTool(string toolName, json arguments) returns string|error {
         string name = (check arguments.name).toString();
         ServiceInfo? svc = catalogLookup(name);
         if svc is () { return string `Unknown service: ${name}`; }
-        http:Client|error hc = new (svc.healthEndpoint, timeout = 3);
-        if hc is error { return {'service: name, status: "UNKNOWN"}.toJsonString(); }
-        http:Response|error r = hc->get("/");
-        return r is http:Response ?
-            {'service: name, status: r.statusCode == 200 ? "UP" : "DEGRADED", httpStatus: r.statusCode}.toJsonString() :
-            {'service: name, status: "DOWN", 'error: r.message()}.toJsonString();
+        ServiceHealthProbe p = probeServiceHealth(svc);
+        if p.status == "UNKNOWN" { return {'service: name, status: "UNKNOWN"}.toJsonString(); }
+        if p.status == "DOWN" { return {'service: name, status: "DOWN", 'error: p.errorMsg}.toJsonString(); }
+        return {'service: name, status: p.status, httpStatus: p.httpStatus}.toJsonString();
     }
     if toolName == "correlate_trace" {
         string tid = (check arguments.trace_id).toString();
@@ -178,6 +210,31 @@ function dispatchTool(string toolName, json arguments) returns string|error {
     }
     if toolName == "get_deploy_freeze_status" {
         return {frozen: isDeployFrozen(), reason: getDeployFreezeReason()}.toJsonString();
+    }
+    if toolName == "suggest_runbooks" {
+        string svc = (check arguments.'service).toString();
+        string diagnosis = (check arguments.diagnosis).toString();
+        RunbookSuggestion[] suggestions = suggestRunbooks(svc, diagnosis);
+        return {'service: svc, diagnosis: diagnosis, suggestions: suggestions.toJson()}.toJsonString();
+    }
+    if toolName == "health_report" {
+        map<json> argsMap = <map<json>>arguments;
+        json? productJ = argsMap["product"];
+        string? product = productJ is string ? productJ : ();
+        return healthReport(product).toJsonString();
+    }
+    if toolName == "top_issues" {
+        map<json> argsMap = <map<json>>arguments;
+        int count = 5;
+        json|error countJ = arguments.count;
+        if countJ is int { count = countJ; }
+        json? productJ = argsMap["product"];
+        string? product = productJ is string ? productJ : ();
+        Issue[] issues = topIssues(count, product);
+        return {issues: issues.toJson()}.toJsonString();
+    }
+    if toolName == "list_deployments" {
+        return listDeployments().toJson().toJsonString();
     }
     return error(string `Unknown tool: ${toolName}`);
 }
